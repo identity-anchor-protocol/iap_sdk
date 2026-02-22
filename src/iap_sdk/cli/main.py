@@ -167,7 +167,35 @@ def _build_parser() -> argparse.ArgumentParser:
 
     flow = sub.add_parser("flow", help="High-level guided flows")
     flow_sub = flow.add_subparsers(dest="flow_command", required=True)
-    flow_sub.add_parser("run", help="Run full end-to-end flow (coming soon)")
+    flow_run = flow_sub.add_parser("run", help="Run full end-to-end flow")
+    flow_run.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    flow_run.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    flow_run.add_argument(
+        "--agent-name",
+        default="Local Agent",
+        help="Optional agent display name metadata",
+    )
+    flow_run.add_argument("--agent-custody-class", default=None)
+    flow_run.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    flow_run.add_argument("--memory-root", default=None)
+    flow_run.add_argument("--sequence", type=int, default=None)
+    flow_run.add_argument("--request-timeout-seconds", type=int, default=300)
+    flow_run.add_argument("--poll-seconds", type=int, default=5)
+    flow_run.add_argument("--open-browser", action="store_true")
+    flow_run.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory for flow artifacts (default: <sessions_dir>/flows/<request_id>)",
+    )
+    flow_run.add_argument("--json", action="store_true")
 
     return parser
 
@@ -599,6 +627,212 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
     return 0 if ok else 4
 
 
+def _print_step(stdout, *, index: int, total: int, title: str) -> None:
+    print(f"Step {index}/{total}: {title}", file=stdout)
+
+
+def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
+    total_steps = 8
+    registry_base = args.registry_base or config.registry_base
+    timeout_seconds = max(1, int(args.request_timeout_seconds))
+    poll_seconds = max(1, int(args.poll_seconds))
+
+    _print_step(stdout, index=1, total=total_steps, title="ensuring local identity")
+    try:
+        identity, _, _ = load_or_create_identity(args.identity_file)
+    except IdentityError as exc:
+        print(f"identity error: {exc}", file=stderr)
+        return 1
+
+    client = RegistryClient(base_url=registry_base)
+
+    _print_step(stdout, index=2, total=total_steps, title="ensuring identity anchor")
+    try:
+        client.submit_identity_anchor(
+            {
+                "agent_public_key_b64": identity.public_key_b64,
+                "agent_id": identity.agent_id,
+                "metadata": {"agent_name": args.agent_name},
+            }
+        )
+    except RegistryUnavailableError as exc:
+        message = str(exc).lower()
+        if "409" not in message or "already" not in message:
+            print(f"registry error: {exc}", file=stderr)
+            return 2
+
+    _print_step(stdout, index=3, total=total_steps, title="computing AMCS root and sequence")
+    memory_root = args.memory_root
+    sequence = args.sequence
+    if memory_root is None or sequence is None:
+        amcs_db_path = args.amcs_db or config.amcs_db_path
+        try:
+            amcs = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=identity.agent_id)
+        except AMCSError as exc:
+            print(f"amcs error: {exc}", file=stderr)
+            return 1
+        if memory_root is None:
+            memory_root = amcs.memory_root
+        if sequence is None:
+            sequence = amcs.sequence
+
+    _print_step(stdout, index=4, total=total_steps, title="submitting continuity request")
+    manifest = build_identity_manifest(
+        {
+            "AGENT.md": f"{args.agent_name}\n",
+            "SOUL.md": "Purpose: continuity certification via iap-agent CLI\n",
+        }
+    )
+    payload = build_continuity_request(
+        agent_public_key_b64=identity.public_key_b64,
+        agent_id=identity.agent_id,
+        agent_name=args.agent_name,
+        agent_custody_class=args.agent_custody_class,
+        memory_root=memory_root,
+        sequence=sequence,
+        manifest_version=manifest["manifest_version"],
+        manifest_hash=manifest["manifest_hash"],
+    )
+    signed_payload = sign_continuity_request(payload, identity.private_key_bytes)
+    try:
+        request_response = client.submit_continuity_request(signed_payload)
+    except RegistryUnavailableError as exc:
+        print(f"registry error: {exc}", file=stderr)
+        return 2
+
+    request_id = request_response.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        print("registry error: invalid response (missing request_id)", file=stderr)
+        return 2
+
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    else:
+        output_dir = Path(config.sessions_dir) / "flows" / request_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        save_session_record(
+            sessions_dir=str(output_dir),
+            request_id=request_id,
+            payload={
+                "created_at": _utc_now_iso(),
+                "registry_base": registry_base,
+                "agent_id": identity.agent_id,
+                "request_id": request_id,
+                "request_payload": signed_payload,
+                "response": request_response,
+            },
+        )
+    except SessionError as exc:
+        print(f"session error: {exc}", file=stderr)
+        return 1
+
+    _print_step(stdout, index=5, total=total_steps, title="resolving payment handoff")
+    payment_info: dict
+    stripe_session = None
+    try:
+        stripe_session = client.create_stripe_checkout_session(request_id=request_id)
+    except RegistryUnavailableError:
+        stripe_session = None
+
+    if stripe_session is not None:
+        checkout_url = stripe_session.get("checkout_url")
+        payment_info = {
+            "method": "stripe",
+            "checkout_url": checkout_url,
+            "session_id": stripe_session.get("session_id"),
+            "payment_status": stripe_session.get("payment_status"),
+        }
+        if args.open_browser and isinstance(checkout_url, str):
+            try:
+                webbrowser.open(checkout_url, new=2)
+            except Exception:  # pragma: no cover
+                pass
+    else:
+        try:
+            status_payload = client.get_continuity_status(request_id)
+        except RegistryUnavailableError as exc:
+            print(f"registry error: {exc}", file=stderr)
+            return 2
+        payment_info = {
+            "method": "lnbits",
+            "status": status_payload.get("status"),
+            "lightning_invoice": status_payload.get("lightning_invoice"),
+            "lnbits_payment_hash": status_payload.get("lnbits_payment_hash"),
+        }
+
+    _print_step(stdout, index=6, total=total_steps, title="waiting for certification")
+    deadline = time.time() + timeout_seconds
+    latest_status = None
+    while time.time() < deadline:
+        try:
+            latest_status = client.get_continuity_status(request_id)
+        except RegistryUnavailableError as exc:
+            print(f"registry error: {exc}", file=stderr)
+            return 2
+        if latest_status.get("status") == "CERTIFIED":
+            break
+        time.sleep(poll_seconds)
+    if not latest_status or latest_status.get("status") != "CERTIFIED":
+        print("timeout waiting for CERTIFIED status", file=stderr)
+        return 3
+
+    _print_step(stdout, index=7, total=total_steps, title="fetching certificate")
+    try:
+        cert_bundle = client.get_continuity_certificate(request_id)
+    except RegistryUnavailableError as exc:
+        print(f"registry error: {exc}", file=stderr)
+        return 2
+    cert_path = output_dir / "certificate.json"
+    cert_path.write_text(json.dumps(cert_bundle, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+    _print_step(stdout, index=8, total=total_steps, title="verifying certificate")
+    try:
+        key_payload = client.get_public_registry_key()
+    except RegistryUnavailableError as exc:
+        print(f"registry error: {exc}", file=stderr)
+        return 2
+    registry_public_key_b64 = key_payload.get("public_key_b64")
+    if not isinstance(registry_public_key_b64, str) or not registry_public_key_b64:
+        print("registry error: missing public_key_b64 in registry response", file=stderr)
+        return 2
+
+    ok, reason = verify_certificate_file(
+        str(cert_path),
+        registry_public_key_b64=registry_public_key_b64,
+    )
+    if not ok:
+        print(f"verification failed: {reason}", file=stderr)
+        return 4
+
+    flow_summary = {
+        "request_id": request_id,
+        "agent_id": identity.agent_id,
+        "registry_base": registry_base,
+        "memory_root": memory_root,
+        "sequence": sequence,
+        "status": latest_status.get("status"),
+        "payment": payment_info,
+        "certificate_file": str(cert_path),
+        "output_dir": str(output_dir),
+        "verify_result": reason,
+    }
+    summary_path = output_dir / "flow_summary.json"
+    summary_path.write_text(
+        json.dumps(flow_summary, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    if args.json:
+        print(json.dumps(flow_summary, sort_keys=True), file=stdout)
+    else:
+        print(f"request_id: {request_id}", file=stdout)
+        print(f"status: {latest_status.get('status')}", file=stdout)
+        print(f"certificate_file: {cert_path}", file=stdout)
+        print(f"output_dir: {output_dir}", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -642,6 +876,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _coming_soon(path=f"continuity {args.continuity_command}", stdout=stdout)
 
     if args.command == "flow":
+        if args.flow_command == "run":
+            return _run_flow(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"flow {args.flow_command}", stdout=stdout)
 
     print("unknown command", file=stderr)

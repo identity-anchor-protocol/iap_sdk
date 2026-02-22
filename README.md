@@ -55,6 +55,7 @@ iap-agent continuity pay --request-id <request-id> --open-browser
 iap-agent continuity wait --request-id <request-id> --json
 iap-agent continuity cert --request-id <request-id> --json
 iap-agent verify ./certificate.json --registry-public-key-b64 <key>
+iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifacts
 ```
 
 ### Beta mode config
