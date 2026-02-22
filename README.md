@@ -48,6 +48,7 @@ iap-agent version
 iap-agent version --json
 iap-agent init
 iap-agent init --show-public --json
+iap-agent amcs root --amcs-db ./amcs.db --agent-id ed25519:...
 ```
 
 ### Beta mode config
@@ -62,4 +63,5 @@ Example:
 beta_mode = true
 maturity_level = "beta"
 registry_base = "http://localhost:8080"
+amcs_db_path = "./amcs.db"
 ```
