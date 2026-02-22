@@ -1,0 +1,39 @@
+# iap-sdk
+
+Python SDK for Identity Anchor Protocol (IAP) request signing and offline certificate verification.
+
+## Install
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+## What this package provides
+
+- Deterministic `agent_id` derivation from Ed25519 public keys
+- Canonical request builders and signers for continuity, lineage, key rotation
+- Registry API client helpers
+- Offline certificate verification (including identity-anchor checks)
+- Liveness and transparency helper utilities
+
+## Quick example
+
+```python
+from iap_sdk import build_continuity_request, sign_continuity_request
+
+payload = build_continuity_request(
+    agent_public_key_b64="...",
+    agent_id="ed25519:...",
+    memory_root="a" * 64,
+    sequence=1,
+    manifest_version="IAM-1",
+    manifest_hash="b" * 64,
+)
+signed = sign_continuity_request(payload, private_key_bytes=b"...")
+```
+
+## Run tests
+
+```bash
+pytest
+```
