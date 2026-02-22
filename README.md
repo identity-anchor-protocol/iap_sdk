@@ -38,6 +38,22 @@ signed = sign_continuity_request(payload, private_key_bytes=b"...")
 pytest
 ```
 
+## Reproducible install
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+iap-agent version
+```
+
+For a clean-room install smoke test, run:
+
+```bash
+./scripts/smoke_install.sh
+```
+
 ## CLI (beta)
 
 Install editable and run:
@@ -65,6 +81,10 @@ iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifact
 - `2`: network/registry unavailable
 - `3`: timeout waiting for certification
 - `4`: verification failure
+
+### Version compatibility
+
+See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 
 ### Beta mode config
 
