@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import webbrowser
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
+from pathlib import Path
 from typing import Sequence
 
 from iap_sdk.certificates import PROTOCOL_VERSION
@@ -125,8 +127,33 @@ def _build_parser() -> argparse.ArgumentParser:
     continuity_pay.add_argument("--cancel-url", default=None)
     continuity_pay.add_argument("--open-browser", action="store_true")
     continuity_pay.add_argument("--json", action="store_true", help="Print payment details as JSON")
-    continuity_sub.add_parser("wait", help="Wait for certification (coming soon)")
-    continuity_sub.add_parser("cert", help="Fetch issued certificate (coming soon)")
+    continuity_wait = continuity_sub.add_parser("wait", help="Wait until request is CERTIFIED")
+    continuity_wait.add_argument("--request-id", required=True)
+    continuity_wait.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    continuity_wait.add_argument("--timeout-seconds", type=int, default=300)
+    continuity_wait.add_argument("--poll-seconds", type=int, default=5)
+    continuity_wait.add_argument("--json", action="store_true")
+
+    continuity_cert = continuity_sub.add_parser("cert", help="Fetch and save issued certificate")
+    continuity_cert.add_argument("--request-id", required=True)
+    continuity_cert.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    continuity_cert.add_argument(
+        "--output-file",
+        default=None,
+        help=(
+            "Path for certificate bundle JSON "
+            "(default: <sessions_dir>/certificates/<request_id>.json)"
+        ),
+    )
+    continuity_cert.add_argument("--json", action="store_true")
 
     flow = sub.add_parser("flow", help="High-level guided flows")
     flow_sub = flow.add_subparsers(dest="flow_command", required=True)
@@ -454,6 +481,75 @@ def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     return 0
 
 
+def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = args.registry_base or config.registry_base
+    timeout_seconds = max(1, int(args.timeout_seconds))
+    poll_seconds = max(1, int(args.poll_seconds))
+    client = RegistryClient(base_url=registry_base)
+
+    deadline = time.time() + timeout_seconds
+    latest = None
+    while time.time() < deadline:
+        try:
+            latest = client.get_continuity_status(args.request_id)
+        except RegistryUnavailableError as exc:
+            print(f"registry error: {exc}", file=stderr)
+            return 2
+        status = latest.get("status")
+        if status == "CERTIFIED":
+            break
+        time.sleep(poll_seconds)
+
+    if not latest or latest.get("status") != "CERTIFIED":
+        print("timeout waiting for CERTIFIED status", file=stderr)
+        return 3
+
+    output = {
+        "request_id": args.request_id,
+        "registry_base": registry_base,
+        "status": latest.get("status"),
+        "paid_at": latest.get("paid_at"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return 0
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"status: {output['status']}", file=stdout)
+    print(f"paid_at: {output['paid_at']}", file=stdout)
+    return 0
+
+
+def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base)
+    try:
+        bundle = client.get_continuity_certificate(args.request_id)
+    except RegistryUnavailableError as exc:
+        print(f"registry error: {exc}", file=stderr)
+        return 2
+
+    if args.output_file:
+        output_path = Path(args.output_file)
+    else:
+        output_path = Path(config.sessions_dir) / "certificates" / f"{args.request_id}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(bundle, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+    output = {
+        "request_id": args.request_id,
+        "registry_base": registry_base,
+        "output_file": str(output_path),
+        "certificate_type": (bundle.get("certificate") or {}).get("certificate_type"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return 0
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"certificate_type: {output['certificate_type']}", file=stdout)
+    print(f"output_file: {output['output_file']}", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -490,6 +586,10 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
             return _run_continuity_request(args=args, config=config, stdout=stdout, stderr=stderr)
         if args.continuity_command == "pay":
             return _run_continuity_pay(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.continuity_command == "wait":
+            return _run_continuity_wait(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.continuity_command == "cert":
+            return _run_continuity_cert(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"continuity {args.continuity_command}", stdout=stdout)
 
     if args.command == "flow":
