@@ -10,8 +10,9 @@ from importlib.metadata import version as pkg_version
 from typing import Sequence
 
 from iap_sdk.certificates import PROTOCOL_VERSION
+from iap_sdk.cli.amcs import AMCSError, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
-from iap_sdk.cli.identity import IdentityError, load_or_create_identity
+from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
 
 
 def _sdk_version() -> str:
@@ -47,6 +48,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument("--json", action="store_true", help="Print identity details as JSON")
     sub.add_parser("verify", help="Verify certificate offline (coming soon)")
+
+    amcs = sub.add_parser("amcs", help="Local AMCS operations")
+    amcs_sub = amcs.add_subparsers(dest="amcs_command", required=True)
+    amcs_root = amcs_sub.add_parser("root", help="Read memory root and sequence from local AMCS DB")
+    amcs_root.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    amcs_root.add_argument("--agent-id", default=None, help="Agent id to query in AMCS")
+    amcs_root.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file when deriving agent_id fallback",
+    )
+    amcs_root.add_argument("--json", action="store_true", help="Print AMCS root details as JSON")
 
     anchor = sub.add_parser("anchor", help="Identity-anchor operations")
     anchor_sub = anchor.add_subparsers(dest="anchor_command", required=True)
@@ -134,6 +147,41 @@ def _run_init(*, args, stdout, stderr) -> int:
     return 0
 
 
+def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
+    amcs_db_path = args.amcs_db or config.amcs_db_path
+
+    agent_id = args.agent_id
+    if not agent_id:
+        try:
+            identity, _ = load_identity(args.identity_file)
+            agent_id = identity.agent_id
+        except IdentityError as exc:
+            print(f"identity error: {exc}", file=stderr)
+            return 1
+
+    try:
+        result = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=agent_id)
+    except AMCSError as exc:
+        print(f"amcs error: {exc}", file=stderr)
+        return 1
+
+    payload = {
+        "agent_id": result.agent_id,
+        "amcs_db_path": result.amcs_db_path,
+        "memory_root": result.memory_root,
+        "sequence": result.sequence,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return 0
+
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"amcs_db_path: {payload['amcs_db_path']}", file=stdout)
+    print(f"sequence: {payload['sequence']}", file=stdout)
+    print(f"memory_root: {payload['memory_root']}", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -154,6 +202,11 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
 
     if args.command == "verify":
         return _coming_soon(path="verify", stdout=stdout)
+
+    if args.command == "amcs":
+        if args.amcs_command == "root":
+            return _run_amcs_root(args=args, config=config, stdout=stdout, stderr=stderr)
+        return _coming_soon(path=f"amcs {args.amcs_command}", stdout=stdout)
 
     if args.command == "anchor":
         return _coming_soon(path=f"anchor {args.anchor_command}", stdout=stdout)

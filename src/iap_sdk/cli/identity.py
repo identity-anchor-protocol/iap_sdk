@@ -101,3 +101,10 @@ def load_or_create_identity(path: str | Path | None = None) -> tuple[LocalIdenti
     if identity_path.exists():
         return _load_identity(identity_path), False, identity_path
     return _create_identity(identity_path), True, identity_path
+
+
+def load_identity(path: str | Path | None = None) -> tuple[LocalIdentity, Path]:
+    identity_path = Path(path) if path else DEFAULT_IDENTITY_PATH
+    if not identity_path.exists():
+        raise IdentityError(f"identity file not found: {identity_path}")
+    return _load_identity(identity_path), identity_path
