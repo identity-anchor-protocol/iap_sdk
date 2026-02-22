@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from typing import Sequence
@@ -13,8 +14,11 @@ from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
 from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
+from iap_sdk.cli.sessions import SessionError, save_session_record
 from iap_sdk.client import RegistryClient
 from iap_sdk.errors import RegistryUnavailableError
+from iap_sdk.manifest import build_identity_manifest
+from iap_sdk.requests import build_continuity_request, sign_continuity_request
 
 
 def _sdk_version() -> str:
@@ -85,7 +89,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
     continuity = sub.add_parser("continuity", help="Continuity operations")
     continuity_sub = continuity.add_subparsers(dest="continuity_command", required=True)
-    continuity_sub.add_parser("request", help="Submit continuity request (coming soon)")
+    continuity_request = continuity_sub.add_parser(
+        "request", help="Submit signed continuity request"
+    )
+    continuity_request.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    continuity_request.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    continuity_request.add_argument("--agent-name", default="Local Agent")
+    continuity_request.add_argument("--agent-custody-class", default=None)
+    continuity_request.add_argument("--memory-root", default=None)
+    continuity_request.add_argument("--sequence", type=int, default=None)
+    continuity_request.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    continuity_request.add_argument(
+        "--sessions-dir",
+        default=None,
+        help="Directory to store request session artifacts (default from config)",
+    )
+    continuity_request.add_argument("--json", action="store_true", help="Print response as JSON")
     continuity_sub.add_parser("pay", help="Show/open payment instructions (coming soon)")
     continuity_sub.add_parser("wait", help="Wait for certification (coming soon)")
     continuity_sub.add_parser("cert", help="Fetch issued certificate (coming soon)")
@@ -248,6 +275,110 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
     return 0
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity, _ = load_identity(args.identity_file)
+    except IdentityError as exc:
+        print(f"identity error: {exc}", file=stderr)
+        return 1
+
+    memory_root = args.memory_root
+    sequence = args.sequence
+    if memory_root is None or sequence is None:
+        amcs_db_path = args.amcs_db or config.amcs_db_path
+        try:
+            amcs = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=identity.agent_id)
+        except AMCSError as exc:
+            print(f"amcs error: {exc}", file=stderr)
+            return 1
+        if memory_root is None:
+            memory_root = amcs.memory_root
+        if sequence is None:
+            sequence = amcs.sequence
+
+    manifest = build_identity_manifest(
+        {
+            "AGENT.md": f"{args.agent_name}\n",
+            "SOUL.md": "Purpose: continuity certification via iap-agent CLI\n",
+        }
+    )
+
+    payload = build_continuity_request(
+        agent_public_key_b64=identity.public_key_b64,
+        agent_id=identity.agent_id,
+        agent_name=args.agent_name,
+        agent_custody_class=args.agent_custody_class,
+        memory_root=memory_root,
+        sequence=sequence,
+        manifest_version=manifest["manifest_version"],
+        manifest_hash=manifest["manifest_hash"],
+    )
+    signed_payload = sign_continuity_request(payload, identity.private_key_bytes)
+
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base)
+    try:
+        response = client.submit_continuity_request(signed_payload)
+    except RegistryUnavailableError as exc:
+        print(f"registry error: {exc}", file=stderr)
+        return 2
+
+    request_id = response.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        print("registry error: invalid response (missing request_id)", file=stderr)
+        return 2
+
+    session_payload = {
+        "created_at": _utc_now_iso(),
+        "registry_base": registry_base,
+        "agent_id": identity.agent_id,
+        "request_id": request_id,
+        "request_payload": signed_payload,
+        "response": response,
+    }
+    sessions_dir = args.sessions_dir or config.sessions_dir
+    try:
+        session_path = save_session_record(
+            sessions_dir=sessions_dir,
+            request_id=request_id,
+            payload=session_payload,
+        )
+    except SessionError as exc:
+        print(f"session error: {exc}", file=stderr)
+        return 1
+
+    output = {
+        "request_id": request_id,
+        "status": response.get("status"),
+        "agent_id": identity.agent_id,
+        "memory_root": memory_root,
+        "sequence": sequence,
+        "session_file": str(session_path),
+        "registry_base": registry_base,
+        "payment": {
+            "lnbits_payment_hash": response.get("lnbits_payment_hash"),
+            "lightning_invoice": response.get("lightning_invoice"),
+            "amount_sats": response.get("amount_sats"),
+        },
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return 0
+
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"status: {output['status']}", file=stdout)
+    print(f"agent_id: {output['agent_id']}", file=stdout)
+    print(f"memory_root: {output['memory_root']}", file=stdout)
+    print(f"sequence: {output['sequence']}", file=stdout)
+    print(f"session_file: {output['session_file']}", file=stdout)
+    print(f"registry_base: {output['registry_base']}", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -280,6 +411,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _coming_soon(path=f"anchor {args.anchor_command}", stdout=stdout)
 
     if args.command == "continuity":
+        if args.continuity_command == "request":
+            return _run_continuity_request(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"continuity {args.continuity_command}", stdout=stdout)
 
     if args.command == "flow":

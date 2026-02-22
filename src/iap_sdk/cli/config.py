@@ -15,6 +15,7 @@ class CLIConfig:
     maturity_level: str = "beta"
     registry_base: str = "http://localhost:8080"
     amcs_db_path: str = "./amcs.db"
+    sessions_dir: str = str(Path.home() / ".iap_agent" / "sessions")
 
 
 class ConfigError(ValueError):
@@ -80,9 +81,15 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
     if not amcs_db_path:
         raise ConfigError("amcs_db_path must not be empty")
 
+    default_sessions_dir = str(Path.home() / ".iap_agent" / "sessions")
+    sessions_dir = str(source.get("sessions_dir", default_sessions_dir)).strip()
+    if not sessions_dir:
+        raise ConfigError("sessions_dir must not be empty")
+
     return CLIConfig(
         beta_mode=beta_mode,
         maturity_level=maturity_level,
         registry_base=registry_base,
         amcs_db_path=amcs_db_path,
+        sessions_dir=sessions_dir,
     )
