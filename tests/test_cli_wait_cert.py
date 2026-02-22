@@ -67,7 +67,7 @@ def test_continuity_wait_timeout(monkeypatch) -> None:
         stderr=err,
     )
     assert rc == 3
-    assert "timeout waiting" in err.getvalue()
+    assert "timeout error:" in err.getvalue()
 
 
 def test_continuity_cert_fetch_and_write(monkeypatch, tmp_path) -> None:

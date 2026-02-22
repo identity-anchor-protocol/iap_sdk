@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import webbrowser
@@ -23,6 +24,26 @@ from iap_sdk.errors import RegistryUnavailableError
 from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import build_continuity_request, sign_continuity_request
 from iap_sdk.verify import verify_certificate_file
+
+EXIT_SUCCESS = 0
+EXIT_VALIDATION_ERROR = 1
+EXIT_NETWORK_ERROR = 2
+EXIT_TIMEOUT = 3
+EXIT_VERIFICATION_FAILED = 4
+
+_SENSITIVE_FIELDS = (
+    "private_key_b64",
+    "registry_signing_key_b64",
+    "webhook_secret",
+    "lnbits_admin_key",
+    "lnbits_invoice_read_key",
+    "stripe_api_key",
+    "stripe_webhook_secret",
+    "secret",
+    "token",
+    "authorization",
+    "api_key",
+)
 
 
 def _sdk_version() -> str:
@@ -211,6 +232,23 @@ def _emit_beta_warning(config: CLIConfig, command: str, stderr) -> None:
     )
 
 
+def _sanitize_error_text(value: str) -> str:
+    redacted = value
+    for field in _SENSITIVE_FIELDS:
+        redacted = re.sub(
+            rf"(?i)({field}\s*[=:]\s*)([^,\s]+)",
+            r"\1[REDACTED]",
+            redacted,
+        )
+    redacted = re.sub(r"(?i)([?&](?:secret|token|api_key)=)([^&\s]+)", r"\1[REDACTED]", redacted)
+    return redacted
+
+
+def _print_error(stderr, prefix: str, message: str, *, code: int) -> int:
+    print(f"{prefix}: {_sanitize_error_text(message)}", file=stderr)
+    return code
+
+
 def _run_version(*, config: CLIConfig, as_json: bool, stdout) -> int:
     payload = {
         "cli": "iap-agent",
@@ -231,20 +269,19 @@ def _run_version(*, config: CLIConfig, as_json: bool, stdout) -> int:
             file=stdout,
         )
         print(f"default registry: {payload['default_registry_base']}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _coming_soon(*, path: str, stdout) -> int:
     print(f"{path}: coming soon", file=stdout)
-    return 2
+    return EXIT_NETWORK_ERROR
 
 
 def _run_init(*, args, stdout, stderr) -> int:
     try:
         identity, created, identity_path = load_or_create_identity(args.identity_file)
     except IdentityError as exc:
-        print(f"identity error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     payload = {
         "identity_path": str(identity_path),
@@ -257,7 +294,7 @@ def _run_init(*, args, stdout, stderr) -> int:
 
     if args.json:
         print(json.dumps(payload, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
 
     print(f"identity_path: {payload['identity_path']}", file=stdout)
     print(f"created: {str(payload['created']).lower()}", file=stdout)
@@ -265,7 +302,7 @@ def _run_init(*, args, stdout, stderr) -> int:
     print(f"public_key_b64: {payload['public_key_b64']}", file=stdout)
     if not args.show_public:
         print("private_key_b64: [hidden in non-json output]", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
@@ -283,8 +320,7 @@ def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         result = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=agent_id)
     except AMCSError as exc:
-        print(f"amcs error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     payload = {
         "agent_id": result.agent_id,
@@ -294,21 +330,20 @@ def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     }
     if args.json:
         print(json.dumps(payload, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
 
     print(f"agent_id: {payload['agent_id']}", file=stdout)
     print(f"amcs_db_path: {payload['amcs_db_path']}", file=stdout)
     print(f"sequence: {payload['sequence']}", file=stdout)
     print(f"memory_root: {payload['memory_root']}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         identity, _ = load_identity(args.identity_file)
     except IdentityError as exc:
-        print(f"identity error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     registry_base = args.registry_base or config.registry_base
     client = RegistryClient(base_url=registry_base)
@@ -331,8 +366,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
             }
             already_exists = True
         else:
-            print(f"registry error: {exc}", file=stderr)
-            return 2
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     output = {
         "registry_base": registry_base,
@@ -342,13 +376,13 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
     }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
 
     print(f"registry_base: {registry_base}", file=stdout)
     print(f"agent_id: {identity.agent_id}", file=stdout)
     print(f"already_exists: {str(already_exists).lower()}", file=stdout)
     print(f"certificate_type: {response.get('certificate_type', 'n/a')}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _utc_now_iso() -> str:
@@ -359,8 +393,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         identity, _ = load_identity(args.identity_file)
     except IdentityError as exc:
-        print(f"identity error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     memory_root = args.memory_root
     sequence = args.sequence
@@ -369,8 +402,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
         try:
             amcs = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=identity.agent_id)
         except AMCSError as exc:
-            print(f"amcs error: {exc}", file=stderr)
-            return 1
+            return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
         if memory_root is None:
             memory_root = amcs.memory_root
         if sequence is None:
@@ -400,13 +432,16 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         response = client.submit_continuity_request(signed_payload)
     except RegistryUnavailableError as exc:
-        print(f"registry error: {exc}", file=stderr)
-        return 2
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     request_id = response.get("request_id")
     if not isinstance(request_id, str) or not request_id:
-        print("registry error: invalid response (missing request_id)", file=stderr)
-        return 2
+        return _print_error(
+            stderr,
+            "registry error",
+            "invalid response (missing request_id)",
+            code=EXIT_NETWORK_ERROR,
+        )
 
     session_payload = {
         "created_at": _utc_now_iso(),
@@ -424,8 +459,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
             payload=session_payload,
         )
     except SessionError as exc:
-        print(f"session error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "session error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     output = {
         "request_id": request_id,
@@ -443,7 +477,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
 
     print(f"request_id: {output['request_id']}", file=stdout)
     print(f"status: {output['status']}", file=stdout)
@@ -452,7 +486,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     print(f"sequence: {output['sequence']}", file=stdout)
     print(f"session_file: {output['session_file']}", file=stdout)
     print(f"registry_base: {output['registry_base']}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
@@ -496,8 +530,7 @@ def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         status = client.get_continuity_status(args.request_id)
     except RegistryUnavailableError as exc:
-        print(f"registry error: {exc}", file=stderr)
-        return 2
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     output = {
         "request_id": args.request_id,
@@ -509,14 +542,14 @@ def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
 
     print(f"payment_method: {output['payment_method']}", file=stdout)
     print(f"request_id: {output['request_id']}", file=stdout)
     print(f"status: {output['status']}", file=stdout)
     print(f"lnbits_payment_hash: {output['lnbits_payment_hash']}", file=stdout)
     print(f"lightning_invoice: {output['lightning_invoice']}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
@@ -531,16 +564,19 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
         try:
             latest = client.get_continuity_status(args.request_id)
         except RegistryUnavailableError as exc:
-            print(f"registry error: {exc}", file=stderr)
-            return 2
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
         status = latest.get("status")
         if status == "CERTIFIED":
             break
         time.sleep(poll_seconds)
 
     if not latest or latest.get("status") != "CERTIFIED":
-        print("timeout waiting for CERTIFIED status", file=stderr)
-        return 3
+        return _print_error(
+            stderr,
+            "timeout error",
+            "waiting for CERTIFIED status",
+            code=EXIT_TIMEOUT,
+        )
 
     output = {
         "request_id": args.request_id,
@@ -550,11 +586,11 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
     }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
     print(f"request_id: {output['request_id']}", file=stdout)
     print(f"status: {output['status']}", file=stdout)
     print(f"paid_at: {output['paid_at']}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
@@ -563,8 +599,7 @@ def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         bundle = client.get_continuity_certificate(args.request_id)
     except RegistryUnavailableError as exc:
-        print(f"registry error: {exc}", file=stderr)
-        return 2
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     if args.output_file:
         output_path = Path(args.output_file)
@@ -581,11 +616,11 @@ def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
-        return 0
+        return EXIT_SUCCESS
     print(f"request_id: {output['request_id']}", file=stdout)
     print(f"certificate_type: {output['certificate_type']}", file=stdout)
     print(f"output_file: {output['output_file']}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
@@ -596,20 +631,27 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
         try:
             key_payload = client.get_public_registry_key()
         except RegistryUnavailableError as exc:
-            print(f"registry error: {exc}", file=stderr)
-            return 2
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
         registry_public_key_b64 = key_payload.get("public_key_b64")
         if not isinstance(registry_public_key_b64, str) or not registry_public_key_b64:
-            print("registry error: missing public_key_b64 in registry response", file=stderr)
-            return 2
+            return _print_error(
+                stderr,
+                "registry error",
+                "missing public_key_b64 in registry response",
+                code=EXIT_NETWORK_ERROR,
+            )
 
     witnesses = None
     if args.witness_bundle:
         try:
             witnesses = json.loads(Path(args.witness_bundle).read_text(encoding="utf-8"))
         except Exception as exc:
-            print(f"verify error: invalid witness bundle: {exc}", file=stderr)
-            return 1
+            return _print_error(
+                stderr,
+                "verify error",
+                f"invalid witness bundle: {exc}",
+                code=EXIT_VALIDATION_ERROR,
+            )
 
     ok, reason = verify_certificate_file(
         args.certificate_json,
@@ -624,7 +666,7 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
         print(json.dumps({"ok": ok, "reason": reason}, sort_keys=True), file=stdout)
     else:
         print(reason, file=stdout)
-    return 0 if ok else 4
+    return EXIT_SUCCESS if ok else EXIT_VERIFICATION_FAILED
 
 
 def _print_step(stdout, *, index: int, total: int, title: str) -> None:
@@ -641,8 +683,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         identity, _, _ = load_or_create_identity(args.identity_file)
     except IdentityError as exc:
-        print(f"identity error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     client = RegistryClient(base_url=registry_base)
 
@@ -658,8 +699,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     except RegistryUnavailableError as exc:
         message = str(exc).lower()
         if "409" not in message or "already" not in message:
-            print(f"registry error: {exc}", file=stderr)
-            return 2
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     _print_step(stdout, index=3, total=total_steps, title="computing AMCS root and sequence")
     memory_root = args.memory_root
@@ -669,8 +709,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
         try:
             amcs = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=identity.agent_id)
         except AMCSError as exc:
-            print(f"amcs error: {exc}", file=stderr)
-            return 1
+            return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
         if memory_root is None:
             memory_root = amcs.memory_root
         if sequence is None:
@@ -697,13 +736,16 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         request_response = client.submit_continuity_request(signed_payload)
     except RegistryUnavailableError as exc:
-        print(f"registry error: {exc}", file=stderr)
-        return 2
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     request_id = request_response.get("request_id")
     if not isinstance(request_id, str) or not request_id:
-        print("registry error: invalid response (missing request_id)", file=stderr)
-        return 2
+        return _print_error(
+            stderr,
+            "registry error",
+            "invalid response (missing request_id)",
+            code=EXIT_NETWORK_ERROR,
+        )
 
     if args.output_dir:
         output_dir = Path(args.output_dir)
@@ -724,8 +766,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
             },
         )
     except SessionError as exc:
-        print(f"session error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "session error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     _print_step(stdout, index=5, total=total_steps, title="resolving payment handoff")
     payment_info: dict
@@ -752,8 +793,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
         try:
             status_payload = client.get_continuity_status(request_id)
         except RegistryUnavailableError as exc:
-            print(f"registry error: {exc}", file=stderr)
-            return 2
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
         payment_info = {
             "method": "lnbits",
             "status": status_payload.get("status"),
@@ -768,21 +808,23 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
         try:
             latest_status = client.get_continuity_status(request_id)
         except RegistryUnavailableError as exc:
-            print(f"registry error: {exc}", file=stderr)
-            return 2
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
         if latest_status.get("status") == "CERTIFIED":
             break
         time.sleep(poll_seconds)
     if not latest_status or latest_status.get("status") != "CERTIFIED":
-        print("timeout waiting for CERTIFIED status", file=stderr)
-        return 3
+        return _print_error(
+            stderr,
+            "timeout error",
+            "waiting for CERTIFIED status",
+            code=EXIT_TIMEOUT,
+        )
 
     _print_step(stdout, index=7, total=total_steps, title="fetching certificate")
     try:
         cert_bundle = client.get_continuity_certificate(request_id)
     except RegistryUnavailableError as exc:
-        print(f"registry error: {exc}", file=stderr)
-        return 2
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
     cert_path = output_dir / "certificate.json"
     cert_path.write_text(json.dumps(cert_bundle, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
@@ -790,20 +832,27 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         key_payload = client.get_public_registry_key()
     except RegistryUnavailableError as exc:
-        print(f"registry error: {exc}", file=stderr)
-        return 2
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
     registry_public_key_b64 = key_payload.get("public_key_b64")
     if not isinstance(registry_public_key_b64, str) or not registry_public_key_b64:
-        print("registry error: missing public_key_b64 in registry response", file=stderr)
-        return 2
+        return _print_error(
+            stderr,
+            "registry error",
+            "missing public_key_b64 in registry response",
+            code=EXIT_NETWORK_ERROR,
+        )
 
     ok, reason = verify_certificate_file(
         str(cert_path),
         registry_public_key_b64=registry_public_key_b64,
     )
     if not ok:
-        print(f"verification failed: {reason}", file=stderr)
-        return 4
+        return _print_error(
+            stderr,
+            "verification failed",
+            reason,
+            code=EXIT_VERIFICATION_FAILED,
+        )
 
     flow_summary = {
         "request_id": request_id,
@@ -830,7 +879,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
         print(f"status: {latest_status.get('status')}", file=stdout)
         print(f"certificate_file: {cert_path}", file=stdout)
         print(f"output_dir: {output_dir}", file=stdout)
-    return 0
+    return EXIT_SUCCESS
 
 
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
@@ -840,8 +889,7 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     try:
         config = load_cli_config(args.config)
     except ConfigError as exc:
-        print(f"config error: {exc}", file=stderr)
-        return 1
+        return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     _emit_beta_warning(config, args.command, stderr)
 
@@ -881,7 +929,7 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _coming_soon(path=f"flow {args.flow_command}", stdout=stdout)
 
     print("unknown command", file=stderr)
-    return 2
+    return EXIT_NETWORK_ERROR
 
 
 if __name__ == "__main__":
