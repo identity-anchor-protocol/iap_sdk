@@ -8,11 +8,32 @@ version = "0.1.0"
 description = "Identity Anchor Protocol SDK for signing requests and offline certificate verification"
 readme = "README.md"
 requires-python = ">=3.9"
+authors = [
+  {name = "Identity Anchor Protocol"},
+]
+license = {file = "LICENSE"}
+keywords = ["iap", "identity", "continuity", "ed25519", "agent"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security :: Cryptography",
+]
 dependencies = [
   "cryptography>=42",
   "pydantic>=2.7",
   "requests>=2.31",
 ]
+
+[project.urls]
+Homepage = "https://github.com/identity-anchor-protocol/iap_sdk"
+Repository = "https://github.com/identity-anchor-protocol/iap_sdk"
+Issues = "https://github.com/identity-anchor-protocol/iap_sdk/issues"
 
 [project.optional-dependencies]
 dev = [

@@ -76,6 +76,20 @@ class RegistryClient:
     def get_continuity_certificate(self, request_id: str) -> dict:
         return self._request("GET", f"/v1/continuity/certificates/{request_id}")
 
+    def create_stripe_checkout_session(
+        self,
+        *,
+        request_id: str,
+        success_url: str | None = None,
+        cancel_url: str | None = None,
+    ) -> dict:
+        payload = {"request_id": request_id}
+        if success_url:
+            payload["success_url"] = success_url
+        if cancel_url:
+            payload["cancel_url"] = cancel_url
+        return self._request("POST", "/v1/payments/stripe/checkout-session", json_payload=payload)
+
     def get_public_registry_key(self) -> dict:
         return self._request("GET", "/registry/public-key")
 

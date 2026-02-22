@@ -38,6 +38,28 @@ signed = sign_continuity_request(payload, private_key_bytes=b"...")
 pytest
 ```
 
+## Reproducible install
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+iap-agent version
+```
+
+For a clean-room install smoke test, run:
+
+```bash
+./scripts/smoke_install.sh
+```
+
+Validate CLI snippets in docs:
+
+```bash
+python scripts/validate_doc_commands.py
+```
+
 ## CLI (beta)
 
 Install editable and run:
@@ -46,7 +68,37 @@ Install editable and run:
 python -m pip install -e ".[dev]"
 iap-agent version
 iap-agent version --json
+iap-agent init
+iap-agent init --show-public --json
+iap-agent amcs root --amcs-db ./amcs.db --agent-id ed25519:...
+iap-agent anchor issue --registry-base http://localhost:8080 --agent-name "Atlas"
+iap-agent continuity request --registry-base http://localhost:8080 --json
+iap-agent continuity pay --request-id <request-id> --open-browser
+iap-agent continuity wait --request-id <request-id> --json
+iap-agent continuity cert --request-id <request-id> --json
+iap-agent verify ./certificate.json --registry-public-key-b64 <key>
+iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifacts
 ```
+
+### CLI exit codes
+
+- `0`: success
+- `1`: validation/config/user input error
+- `2`: network/registry unavailable
+- `3`: timeout waiting for certification
+- `4`: verification failure
+
+### Version compatibility
+
+See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
+
+## Docs
+
+- `/docs/quickstart-first-certificate.md`
+- `/docs/local-amcs-privacy-model.md`
+- `/docs/lnbits-vs-stripe-flow.md`
+- `/docs/troubleshooting.md`
+- `/docs/migration-cli-first.md`
 
 ### Beta mode config
 
@@ -60,4 +112,5 @@ Example:
 beta_mode = true
 maturity_level = "beta"
 registry_base = "http://localhost:8080"
+amcs_db_path = "./amcs.db"
 ```
