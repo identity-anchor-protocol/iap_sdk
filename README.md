@@ -37,3 +37,27 @@ signed = sign_continuity_request(payload, private_key_bytes=b"...")
 ```bash
 pytest
 ```
+
+## CLI (beta)
+
+Install editable and run:
+
+```bash
+python -m pip install -e ".[dev]"
+iap-agent version
+iap-agent version --json
+```
+
+### Beta mode config
+
+Default config path:
+
+`~/.iap_agent/config.toml`
+
+Example:
+
+```toml
+beta_mode = true
+maturity_level = "beta"
+registry_base = "http://localhost:8080"
+```
