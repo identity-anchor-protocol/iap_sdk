@@ -22,6 +22,7 @@ from iap_sdk.client import RegistryClient
 from iap_sdk.errors import RegistryUnavailableError
 from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import build_continuity_request, sign_continuity_request
+from iap_sdk.verify import verify_certificate_file
 
 
 def _sdk_version() -> str:
@@ -56,7 +57,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print only public fields (agent_id + public_key_b64)",
     )
     init.add_argument("--json", action="store_true", help="Print identity details as JSON")
-    sub.add_parser("verify", help="Verify certificate offline (coming soon)")
+    verify = sub.add_parser("verify", help="Verify certificate offline")
+    verify.add_argument("certificate_json")
+    verify.add_argument("--registry-public-key-b64", default=None)
+    verify.add_argument("--registry-base", default=None)
+    verify.add_argument("--identity-anchor", default=None)
+    verify.add_argument("--profile", choices=("basic", "strict"), default="basic")
+    verify.add_argument("--previous-certificate", default=None)
+    verify.add_argument("--witness-bundle", default=None, help="Path to JSON witness bundle list")
+    verify.add_argument("--min-witnesses", type=int, default=0)
+    verify.add_argument("--json", action="store_true")
 
     amcs = sub.add_parser("amcs", help="Local AMCS operations")
     amcs_sub = amcs.add_subparsers(dest="amcs_command", required=True)
@@ -550,6 +560,45 @@ def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     return 0
 
 
+def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_public_key_b64 = args.registry_public_key_b64
+    if registry_public_key_b64 is None:
+        registry_base = args.registry_base or config.registry_base
+        client = RegistryClient(base_url=registry_base)
+        try:
+            key_payload = client.get_public_registry_key()
+        except RegistryUnavailableError as exc:
+            print(f"registry error: {exc}", file=stderr)
+            return 2
+        registry_public_key_b64 = key_payload.get("public_key_b64")
+        if not isinstance(registry_public_key_b64, str) or not registry_public_key_b64:
+            print("registry error: missing public_key_b64 in registry response", file=stderr)
+            return 2
+
+    witnesses = None
+    if args.witness_bundle:
+        try:
+            witnesses = json.loads(Path(args.witness_bundle).read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"verify error: invalid witness bundle: {exc}", file=stderr)
+            return 1
+
+    ok, reason = verify_certificate_file(
+        args.certificate_json,
+        registry_public_key_b64=registry_public_key_b64,
+        profile=args.profile,
+        identity_anchor_path=args.identity_anchor,
+        previous_certificate_path=args.previous_certificate,
+        witness_bundle=witnesses,
+        min_witnesses=args.min_witnesses,
+    )
+    if args.json:
+        print(json.dumps({"ok": ok, "reason": reason}, sort_keys=True), file=stdout)
+    else:
+        print(reason, file=stdout)
+    return 0 if ok else 4
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -569,7 +618,7 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _run_init(args=args, stdout=stdout, stderr=stderr)
 
     if args.command == "verify":
-        return _coming_soon(path="verify", stdout=stdout)
+        return _run_verify(args=args, config=config, stdout=stdout, stderr=stderr)
 
     if args.command == "amcs":
         if args.amcs_command == "root":
