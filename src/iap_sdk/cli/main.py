@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import webbrowser
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
@@ -113,7 +114,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory to store request session artifacts (default from config)",
     )
     continuity_request.add_argument("--json", action="store_true", help="Print response as JSON")
-    continuity_sub.add_parser("pay", help="Show/open payment instructions (coming soon)")
+    continuity_pay = continuity_sub.add_parser("pay", help="Show payment instructions for request")
+    continuity_pay.add_argument("--request-id", required=True)
+    continuity_pay.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    continuity_pay.add_argument("--success-url", default=None)
+    continuity_pay.add_argument("--cancel-url", default=None)
+    continuity_pay.add_argument("--open-browser", action="store_true")
+    continuity_pay.add_argument("--json", action="store_true", help="Print payment details as JSON")
     continuity_sub.add_parser("wait", help="Wait for certification (coming soon)")
     continuity_sub.add_parser("cert", help="Fetch issued certificate (coming soon)")
 
@@ -379,6 +390,70 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     return 0
 
 
+def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base)
+
+    stripe_session = None
+    try:
+        stripe_session = client.create_stripe_checkout_session(
+            request_id=args.request_id,
+            success_url=args.success_url,
+            cancel_url=args.cancel_url,
+        )
+    except RegistryUnavailableError:
+        stripe_session = None
+
+    if stripe_session is not None:
+        checkout_url = stripe_session.get("checkout_url")
+        output = {
+            "request_id": args.request_id,
+            "registry_base": registry_base,
+            "payment_method": "stripe",
+            "session_id": stripe_session.get("session_id"),
+            "checkout_url": checkout_url,
+            "payment_status": stripe_session.get("payment_status"),
+        }
+        if args.open_browser and isinstance(checkout_url, str):
+            try:
+                webbrowser.open(checkout_url, new=2)
+            except Exception:  # pragma: no cover
+                pass
+        if args.json:
+            print(json.dumps(output, sort_keys=True), file=stdout)
+            return 0
+        print(f"payment_method: {output['payment_method']}", file=stdout)
+        print(f"request_id: {output['request_id']}", file=stdout)
+        print(f"checkout_url: {output['checkout_url']}", file=stdout)
+        print(f"session_id: {output['session_id']}", file=stdout)
+        return 0
+
+    try:
+        status = client.get_continuity_status(args.request_id)
+    except RegistryUnavailableError as exc:
+        print(f"registry error: {exc}", file=stderr)
+        return 2
+
+    output = {
+        "request_id": args.request_id,
+        "registry_base": registry_base,
+        "payment_method": "lnbits",
+        "status": status.get("status"),
+        "lnbits_payment_hash": status.get("lnbits_payment_hash"),
+        "lightning_invoice": status.get("lightning_invoice"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return 0
+
+    print(f"payment_method: {output['payment_method']}", file=stdout)
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"status: {output['status']}", file=stdout)
+    print(f"lnbits_payment_hash: {output['lnbits_payment_hash']}", file=stdout)
+    print(f"lightning_invoice: {output['lightning_invoice']}", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -413,6 +488,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "continuity":
         if args.continuity_command == "request":
             return _run_continuity_request(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.continuity_command == "pay":
+            return _run_continuity_pay(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"continuity {args.continuity_command}", stdout=stdout)
 
     if args.command == "flow":
