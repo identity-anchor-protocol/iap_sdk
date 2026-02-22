@@ -46,9 +46,9 @@ def test_beta_warning_suppressed_when_beta_mode_false(tmp_path) -> None:
     out = io.StringIO()
     err = io.StringIO()
 
-    rc = main(["--config", str(config_path), "continuity", "pay"], stdout=out, stderr=err)
+    rc = main(["--config", str(config_path), "continuity", "wait"], stdout=out, stderr=err)
     assert rc == 2
-    assert "continuity pay: coming soon" in out.getvalue()
+    assert "continuity wait: coming soon" in out.getvalue()
     assert err.getvalue() == ""
 
 

@@ -51,6 +51,7 @@ iap-agent init --show-public --json
 iap-agent amcs root --amcs-db ./amcs.db --agent-id ed25519:...
 iap-agent anchor issue --registry-base http://localhost:8080 --agent-name "Atlas"
 iap-agent continuity request --registry-base http://localhost:8080 --json
+iap-agent continuity pay --request-id <request-id> --open-browser
 ```
 
 ### Beta mode config
