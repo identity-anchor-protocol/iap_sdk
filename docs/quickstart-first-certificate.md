@@ -20,13 +20,13 @@ iap-agent init --show-public --json
 ## 3) Ensure identity anchor at registry
 
 ```bash
-iap-agent anchor issue --registry-base http://localhost:8080 --agent-name "Atlas"
+iap-agent anchor issue --registry-base https://registry.ia-protocol.com --agent-name "Atlas"
 ```
 
 ## 4) Create continuity request from local AMCS
 
 ```bash
-iap-agent continuity request --registry-base http://localhost:8080 --json
+iap-agent continuity request --registry-base https://registry.ia-protocol.com --json
 ```
 
 ## 5) Payment + certification + certificate
@@ -40,11 +40,11 @@ iap-agent continuity cert --request-id <request-id> --json
 ## 6) Offline verify certificate
 
 ```bash
-iap-agent verify ./certificate.json --registry-base http://localhost:8080
+iap-agent verify ./certificate.json --registry-base https://registry.ia-protocol.com
 ```
 
 ## One-command path
 
 ```bash
-iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifacts
+iap-agent flow run --registry-base https://registry.ia-protocol.com --output-dir ./artifacts
 ```

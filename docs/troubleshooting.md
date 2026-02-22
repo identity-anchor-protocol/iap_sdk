@@ -23,7 +23,7 @@ iap-agent version
 
 - verify registry is running
 - verify `registry_base` in config or command override
-- check local/prod port differences (`http://localhost:8080` vs TLS domain)
+- check local/prod endpoint differences (`http://localhost:8080` vs `https://registry.ia-protocol.com`)
 
 ## request remains `WAITING_PAYMENT`
 
@@ -40,7 +40,7 @@ iap-agent continuity wait --request-id <request-id> --timeout-seconds 600
 - fetch current registry public key:
 
 ```bash
-iap-agent verify ./certificate.json --registry-base http://localhost:8080
+iap-agent verify ./certificate.json --registry-base https://registry.ia-protocol.com
 ```
 
 - if strict lineage checks are required, provide previous certificate and identity anchor:
