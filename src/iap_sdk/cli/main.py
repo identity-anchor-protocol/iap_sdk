@@ -11,6 +11,7 @@ from typing import Sequence
 
 from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
+from iap_sdk.cli.identity import IdentityError, load_or_create_identity
 
 
 def _sdk_version() -> str:
@@ -33,7 +34,18 @@ def _build_parser() -> argparse.ArgumentParser:
     version = sub.add_parser("version", help="Show CLI and protocol version")
     version.add_argument("--json", action="store_true", help="Print version details as JSON")
 
-    sub.add_parser("init", help="Initialize local agent identity (coming soon)")
+    init = sub.add_parser("init", help="Initialize or load local agent identity")
+    init.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    init.add_argument(
+        "--show-public",
+        action="store_true",
+        help="Print only public fields (agent_id + public_key_b64)",
+    )
+    init.add_argument("--json", action="store_true", help="Print identity details as JSON")
     sub.add_parser("verify", help="Verify certificate offline (coming soon)")
 
     anchor = sub.add_parser("anchor", help="Identity-anchor operations")
@@ -93,6 +105,35 @@ def _coming_soon(*, path: str, stdout) -> int:
     return 2
 
 
+def _run_init(*, args, stdout, stderr) -> int:
+    try:
+        identity, created, identity_path = load_or_create_identity(args.identity_file)
+    except IdentityError as exc:
+        print(f"identity error: {exc}", file=stderr)
+        return 1
+
+    payload = {
+        "identity_path": str(identity_path),
+        "created": created,
+        "agent_id": identity.agent_id,
+        "public_key_b64": identity.public_key_b64,
+    }
+    if not args.show_public:
+        payload["private_key_b64"] = identity.private_key_b64
+
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return 0
+
+    print(f"identity_path: {payload['identity_path']}", file=stdout)
+    print(f"created: {str(payload['created']).lower()}", file=stdout)
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"public_key_b64: {payload['public_key_b64']}", file=stdout)
+    if not args.show_public:
+        print("private_key_b64: [hidden in non-json output]", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -109,7 +150,7 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _run_version(config=config, as_json=args.json, stdout=stdout)
 
     if args.command == "init":
-        return _coming_soon(path="init", stdout=stdout)
+        return _run_init(args=args, stdout=stdout, stderr=stderr)
 
     if args.command == "verify":
         return _coming_soon(path="verify", stdout=stdout)

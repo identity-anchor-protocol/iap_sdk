@@ -46,6 +46,8 @@ Install editable and run:
 python -m pip install -e ".[dev]"
 iap-agent version
 iap-agent version --json
+iap-agent init
+iap-agent init --show-public --json
 ```
 
 ### Beta mode config
