@@ -58,6 +58,14 @@ iap-agent verify ./certificate.json --registry-public-key-b64 <key>
 iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifacts
 ```
 
+### CLI exit codes
+
+- `0`: success
+- `1`: validation/config/user input error
+- `2`: network/registry unavailable
+- `3`: timeout waiting for certification
+- `4`: verification failure
+
 ### Beta mode config
 
 Default config path:
