@@ -1,0 +1,18 @@
+{
+  "name": "valid_identity_anchor",
+  "registry_public_key_b64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+  "certificate": {
+    "certificate_version": "IAP-0.1",
+    "certificate_type": "IAP-Identity-0.1",
+    "agent_id": "ed25519:3pbjqji4kezbw4tg46gryfi4fnrk76gl",
+    "agent_public_key_b64": "/RckOFqgx1tk+3jNYC+h2ZH96/drE8WO1wLqyDXp9hg=",
+    "issued_at": "2026-02-21T12:00:00Z",
+    "registry_id": "iap-registry-example",
+    "metadata": {
+      "agent_name": "Atlas"
+    },
+    "registry_signature_b64": "1BXLVakuJ8W8n01lNMZtJvLOJHVnIo/1clEtSNX/y9sOkMzFMIYMN+E1znO2+NyJ0BxvSSJ/DZ7CedEcj8jvAw=="
+  },
+  "expect_ok": true,
+  "expect_reason": "ok"
+}
