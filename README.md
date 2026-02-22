@@ -49,6 +49,7 @@ iap-agent version --json
 iap-agent init
 iap-agent init --show-public --json
 iap-agent amcs root --amcs-db ./amcs.db --agent-id ed25519:...
+iap-agent anchor issue --registry-base http://localhost:8080 --agent-name "Atlas"
 ```
 
 ### Beta mode config
