@@ -4,5 +4,6 @@ __pycache__/
 .ruff_cache/
 .venv/
 .venv-cli/
+.venv-smoke/
 *.egg-info/
 .DS_Store

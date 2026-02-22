@@ -54,6 +54,12 @@ For a clean-room install smoke test, run:
 ./scripts/smoke_install.sh
 ```
 
+Validate CLI snippets in docs:
+
+```bash
+python scripts/validate_doc_commands.py
+```
+
 ## CLI (beta)
 
 Install editable and run:
@@ -85,6 +91,14 @@ iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifact
 ### Version compatibility
 
 See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
+
+## Docs
+
+- `/docs/quickstart-first-certificate.md`
+- `/docs/local-amcs-privacy-model.md`
+- `/docs/lnbits-vs-stripe-flow.md`
+- `/docs/troubleshooting.md`
+- `/docs/migration-cli-first.md`
 
 ### Beta mode config
 
