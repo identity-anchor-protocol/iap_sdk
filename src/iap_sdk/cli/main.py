@@ -13,6 +13,8 @@ from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
 from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
+from iap_sdk.client import RegistryClient
+from iap_sdk.errors import RegistryUnavailableError
 
 
 def _sdk_version() -> str:
@@ -63,7 +65,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
     anchor = sub.add_parser("anchor", help="Identity-anchor operations")
     anchor_sub = anchor.add_subparsers(dest="anchor_command", required=True)
-    anchor_sub.add_parser("issue", help="Issue identity anchor (coming soon)")
+    anchor_issue = anchor_sub.add_parser("issue", help="Issue identity anchor certificate")
+    anchor_issue.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    anchor_issue.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    anchor_issue.add_argument(
+        "--agent-name",
+        default="Local Agent",
+        help="Optional agent display name metadata",
+    )
+    anchor_issue.add_argument("--json", action="store_true", help="Print response as JSON")
 
     continuity = sub.add_parser("continuity", help="Continuity operations")
     continuity_sub = continuity.add_subparsers(dest="continuity_command", required=True)
@@ -182,6 +200,54 @@ def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     return 0
 
 
+def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity, _ = load_identity(args.identity_file)
+    except IdentityError as exc:
+        print(f"identity error: {exc}", file=stderr)
+        return 1
+
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base)
+    payload = {
+        "agent_public_key_b64": identity.public_key_b64,
+        "agent_id": identity.agent_id,
+        "metadata": {"agent_name": args.agent_name},
+    }
+
+    try:
+        response = client.submit_identity_anchor(payload)
+        already_exists = False
+    except RegistryUnavailableError as exc:
+        message = str(exc)
+        if "409" in message and "already" in message.lower():
+            response = {
+                "status": "already-exists",
+                "agent_id": identity.agent_id,
+                "registry_base": registry_base,
+            }
+            already_exists = True
+        else:
+            print(f"registry error: {exc}", file=stderr)
+            return 2
+
+    output = {
+        "registry_base": registry_base,
+        "agent_id": identity.agent_id,
+        "already_exists": already_exists,
+        "certificate": response,
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return 0
+
+    print(f"registry_base: {registry_base}", file=stdout)
+    print(f"agent_id: {identity.agent_id}", file=stdout)
+    print(f"already_exists: {str(already_exists).lower()}", file=stdout)
+    print(f"certificate_type: {response.get('certificate_type', 'n/a')}", file=stdout)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.stderr) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -209,6 +275,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _coming_soon(path=f"amcs {args.amcs_command}", stdout=stdout)
 
     if args.command == "anchor":
+        if args.anchor_command == "issue":
+            return _run_anchor_issue(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"anchor {args.anchor_command}", stdout=stdout)
 
     if args.command == "continuity":
