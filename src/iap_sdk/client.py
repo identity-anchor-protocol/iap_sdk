@@ -59,13 +59,29 @@ class RegistryClient:
         return response.json()
 
     def submit_identity_anchor(self, payload: dict) -> dict:
-        return self._request("POST", "/v1/certificates/identity-anchor", json_payload=payload)
+        return self._request(
+            "POST",
+            "/v1/certificates/identity-anchor/requests",
+            json_payload=payload,
+        )
+
+    def get_identity_anchor_status(self, request_id: str) -> dict:
+        return self._request("GET", f"/v1/certificates/identity-anchor/requests/{request_id}")
+
+    def get_identity_anchor_certificate(self, request_id: str) -> dict:
+        return self._request("GET", f"/v1/certificates/identity-anchor/certificates/{request_id}")
 
     def submit_continuity_request(self, payload: dict) -> dict:
         return self._request("POST", "/v1/continuity/requests", json_payload=payload)
 
     def submit_lineage_request(self, payload: dict) -> dict:
-        return self._request("POST", "/v1/certificates/lineage", json_payload=payload)
+        return self._request("POST", "/v1/certificates/lineage/requests", json_payload=payload)
+
+    def get_lineage_status(self, request_id: str) -> dict:
+        return self._request("GET", f"/v1/certificates/lineage/requests/{request_id}")
+
+    def get_lineage_certificate(self, request_id: str) -> dict:
+        return self._request("GET", f"/v1/certificates/lineage/certificates/{request_id}")
 
     def submit_key_rotation_request(self, payload: dict) -> dict:
         return self._request("POST", "/v1/certificates/key-rotation", json_payload=payload)
@@ -107,6 +123,36 @@ class RegistryClient:
                 return status
             time.sleep(max(0.1, interval))
         raise SDKTimeoutError(f"timed out waiting for certification: request_id={request_id}")
+
+    def wait_for_identity_anchor(
+        self,
+        *,
+        request_id: str,
+        timeout: float,
+        interval: float = 2.0,
+    ) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status = self.get_identity_anchor_status(request_id)
+            if status.get("status") == "CERTIFIED":
+                return status
+            time.sleep(max(0.1, interval))
+        raise SDKTimeoutError(f"timed out waiting for identity-anchor: request_id={request_id}")
+
+    def wait_for_lineage(
+        self,
+        *,
+        request_id: str,
+        timeout: float,
+        interval: float = 2.0,
+    ) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status = self.get_lineage_status(request_id)
+            if status.get("status") == "CERTIFIED":
+                return status
+            time.sleep(max(0.1, interval))
+        raise SDKTimeoutError(f"timed out waiting for lineage: request_id={request_id}")
 
 
 __all__ = ["RegistryClient"]
