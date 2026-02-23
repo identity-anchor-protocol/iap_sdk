@@ -27,8 +27,16 @@ def test_anchor_issue_success_json(monkeypatch) -> None:
             assert payload["agent_id"] == "ed25519:test-agent"
             assert payload["metadata"]["agent_name"] == "Atlas"
             return {
-                "certificate_type": "IAP-Identity-0.1",
-                "agent_id": payload["agent_id"],
+                "request_id": "req-anchor-1",
+                "status": "WAITING_PAYMENT",
+            }
+
+        def create_stripe_checkout_session(self, *, request_id: str, **kwargs) -> dict:  # noqa: ARG002
+            assert request_id == "req-anchor-1"
+            return {
+                "session_id": "cs_anchor_1",
+                "checkout_url": "https://checkout",
+                "payment_status": "unpaid",
             }
 
     monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
@@ -48,8 +56,8 @@ def test_anchor_issue_success_json(monkeypatch) -> None:
     )
     assert rc == 0
     payload = json.loads(out.getvalue())
-    assert payload["already_exists"] is False
-    assert payload["certificate"]["certificate_type"] == "IAP-Identity-0.1"
+    assert payload["request_id"] == "req-anchor-1"
+    assert payload["payment"]["payment_method"] == "stripe"
     assert err.getvalue().startswith("[beta]")
 
 
@@ -69,9 +77,8 @@ def test_anchor_issue_handles_existing(monkeypatch) -> None:
     monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
 
     rc = main(["anchor", "issue", "--json"], stdout=out, stderr=err)
-    assert rc == 0
-    payload = json.loads(out.getvalue())
-    assert payload["already_exists"] is True
+    assert rc == 2
+    assert "registry error:" in err.getvalue()
 
 
 def test_anchor_issue_registry_failure(monkeypatch) -> None:

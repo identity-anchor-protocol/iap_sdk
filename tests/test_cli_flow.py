@@ -52,14 +52,28 @@ def test_flow_run_end_to_end(monkeypatch, tmp_path) -> None:
             self.calls = 0
 
         def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
-            return {"certificate_type": "IAP-Identity-0.2"}
+            return {"request_id": "req-anchor", "status": "WAITING_PAYMENT"}
+
+        def get_identity_anchor_status(self, request_id: str) -> dict:
+            assert request_id == "req-anchor"
+            return {
+                "status": "WAITING_PAYMENT",
+                "lnbits_payment_hash": "anchor-hash",
+                "lightning_invoice": "lnbc1anchor",
+            }
+
+        def wait_for_identity_anchor(
+            self, *, request_id: str, timeout: float, interval: float
+        ) -> dict:  # noqa: ARG002
+            assert request_id == "req-anchor"
+            return {"status": "CERTIFIED"}
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["sequence"] == 12
             return {"request_id": "req-flow", "status": "WAITING_PAYMENT"}
 
         def create_stripe_checkout_session(self, *, request_id: str, **kwargs) -> dict:  # noqa: ARG002
-            assert request_id == "req-flow"
+            assert request_id in {"req-anchor", "req-flow"}
             return {
                 "session_id": "cs_test_123",
                 "checkout_url": "https://checkout.stripe.test/session",
@@ -149,12 +163,25 @@ def test_flow_run_verification_failure(monkeypatch, tmp_path) -> None:
             self.base_url = base_url
 
         def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
-            return {"certificate_type": "IAP-Identity-0.2"}
+            return {"request_id": "req-anchor", "status": "WAITING_PAYMENT"}
+
+        def get_identity_anchor_status(self, request_id: str) -> dict:
+            return {
+                "status": "WAITING_PAYMENT",
+                "lnbits_payment_hash": "anchor-hash",
+                "lightning_invoice": "lnbc1anchor",
+            }
+
+        def wait_for_identity_anchor(
+            self, *, request_id: str, timeout: float, interval: float
+        ) -> dict:  # noqa: ARG002
+            return {"status": "CERTIFIED"}
 
         def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
             return {"request_id": "req-fail", "status": "WAITING_PAYMENT"}
 
         def create_stripe_checkout_session(self, *, request_id: str, **kwargs) -> dict:  # noqa: ARG002
+            assert request_id in {"req-anchor", "req-fail"}
             return {"session_id": "cs_test_123", "checkout_url": "https://checkout"}
 
         def get_continuity_status(self, request_id: str) -> dict:  # noqa: ARG002

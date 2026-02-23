@@ -20,7 +20,7 @@ from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
 from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
 from iap_sdk.cli.sessions import SessionError, save_session_record
 from iap_sdk.client import RegistryClient
-from iap_sdk.errors import RegistryUnavailableError
+from iap_sdk.errors import RegistryUnavailableError, SDKTimeoutError
 from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import build_continuity_request, sign_continuity_request
 from iap_sdk.verify import verify_certificate_file
@@ -119,6 +119,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default="Local Agent",
         help="Optional agent display name metadata",
     )
+    anchor_issue.add_argument(
+        "--payment-provider",
+        choices=("auto", "stripe", "lnbits"),
+        default="auto",
+        help="Choose payment handoff provider",
+    )
+    anchor_issue.add_argument("--success-url", default=None)
+    anchor_issue.add_argument("--cancel-url", default=None)
+    anchor_issue.add_argument("--open-browser", action="store_true")
+    anchor_issue.add_argument("--wait", action="store_true", help="Wait until request is CERTIFIED")
+    anchor_issue.add_argument("--timeout-seconds", type=int, default=300)
+    anchor_issue.add_argument("--poll-seconds", type=int, default=5)
     anchor_issue.add_argument("--json", action="store_true", help="Print response as JSON")
 
     continuity = sub.add_parser("continuity", help="Continuity operations")
@@ -156,6 +168,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     continuity_pay.add_argument("--success-url", default=None)
     continuity_pay.add_argument("--cancel-url", default=None)
+    continuity_pay.add_argument(
+        "--payment-provider",
+        choices=("auto", "stripe", "lnbits"),
+        default="auto",
+        help="Choose payment handoff provider",
+    )
     continuity_pay.add_argument("--open-browser", action="store_true")
     continuity_pay.add_argument("--json", action="store_true", help="Print payment details as JSON")
     continuity_wait = continuity_sub.add_parser("wait", help="Wait until request is CERTIFIED")
@@ -210,6 +228,12 @@ def _build_parser() -> argparse.ArgumentParser:
     flow_run.add_argument("--sequence", type=int, default=None)
     flow_run.add_argument("--request-timeout-seconds", type=int, default=300)
     flow_run.add_argument("--poll-seconds", type=int, default=5)
+    flow_run.add_argument(
+        "--payment-provider",
+        choices=("auto", "stripe", "lnbits"),
+        default="auto",
+        help="Choose payment handoff provider",
+    )
     flow_run.add_argument("--open-browser", action="store_true")
     flow_run.add_argument(
         "--output-dir",
@@ -355,24 +379,60 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     try:
         response = client.submit_identity_anchor(payload)
-        already_exists = False
     except RegistryUnavailableError as exc:
-        message = str(exc)
-        if "409" in message and "already" in message.lower():
-            response = {
-                "status": "already-exists",
-                "agent_id": identity.agent_id,
-                "registry_base": registry_base,
-            }
-            already_exists = True
-        else:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    request_id = response.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return _print_error(
+            stderr,
+            "registry error",
+            "invalid response (missing request_id)",
+            code=EXIT_NETWORK_ERROR,
+        )
+
+    try:
+        payment = _resolve_payment_handoff(
+            client=client,
+            request_id=request_id,
+            registry_base=registry_base,
+            payment_provider=args.payment_provider,
+            status_fetcher=lambda rid: client.get_identity_anchor_status(rid),
+            success_url=args.success_url,
+            cancel_url=args.cancel_url,
+            open_browser=args.open_browser,
+        )
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    certificate = None
+    final_status = response.get("status")
+    if args.wait:
+        try:
+            status = client.wait_for_identity_anchor(
+                request_id=request_id,
+                timeout=max(1, int(args.timeout_seconds)),
+                interval=max(1, int(args.poll_seconds)),
+            )
+        except RegistryUnavailableError as exc:
             return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+        except SDKTimeoutError as exc:
+            return _print_error(stderr, "timeout error", str(exc), code=EXIT_TIMEOUT)
+        final_status = status.get("status")
+        if final_status == "CERTIFIED":
+            try:
+                cert_bundle = client.get_identity_anchor_certificate(request_id)
+                certificate = cert_bundle.get("certificate")
+            except RegistryUnavailableError as exc:
+                return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     output = {
         "registry_base": registry_base,
         "agent_id": identity.agent_id,
-        "already_exists": already_exists,
-        "certificate": response,
+        "request_id": request_id,
+        "status": final_status,
+        "payment": payment,
+        "certificate": certificate,
     }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
@@ -380,13 +440,66 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     print(f"registry_base: {registry_base}", file=stdout)
     print(f"agent_id: {identity.agent_id}", file=stdout)
-    print(f"already_exists: {str(already_exists).lower()}", file=stdout)
-    print(f"certificate_type: {response.get('certificate_type', 'n/a')}", file=stdout)
+    print(f"request_id: {request_id}", file=stdout)
+    print(f"status: {final_status}", file=stdout)
+    print(f"payment_method: {payment['payment_method']}", file=stdout)
     return EXIT_SUCCESS
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_payment_handoff(
+    *,
+    client: RegistryClient,
+    request_id: str,
+    registry_base: str,
+    payment_provider: str,
+    status_fetcher,
+    success_url: str | None,
+    cancel_url: str | None,
+    open_browser: bool,
+) -> dict:
+    if payment_provider in {"auto", "stripe"}:
+        try:
+            stripe_session = client.create_stripe_checkout_session(
+                request_id=request_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+        except RegistryUnavailableError:
+            stripe_session = None
+
+        if stripe_session is not None:
+            checkout_url = stripe_session.get("checkout_url")
+            if open_browser and isinstance(checkout_url, str):
+                try:
+                    webbrowser.open(checkout_url, new=2)
+                except Exception:  # pragma: no cover
+                    pass
+            return {
+                "payment_method": "stripe",
+                "method": "stripe",
+                "request_id": request_id,
+                "registry_base": registry_base,
+                "session_id": stripe_session.get("session_id"),
+                "checkout_url": checkout_url,
+                "payment_status": stripe_session.get("payment_status"),
+            }
+        if payment_provider == "stripe":
+            raise RegistryUnavailableError("registry request failed: stripe checkout unavailable")
+
+    status = status_fetcher(request_id)
+    return {
+        "payment_method": "lnbits",
+        "method": "lnbits",
+        "request_id": request_id,
+        "registry_base": registry_base,
+        "status": status.get("status"),
+        "lnbits_payment_hash": status.get("lnbits_payment_hash"),
+        "lightning_invoice": status.get("lightning_invoice"),
+    }
 
 
 def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
@@ -493,62 +606,33 @@ def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
     client = RegistryClient(base_url=registry_base)
 
-    stripe_session = None
     try:
-        stripe_session = client.create_stripe_checkout_session(
+        output = _resolve_payment_handoff(
+            client=client,
             request_id=args.request_id,
+            registry_base=registry_base,
+            payment_provider=args.payment_provider,
+            status_fetcher=client.get_continuity_status,
             success_url=args.success_url,
             cancel_url=args.cancel_url,
+            open_browser=args.open_browser,
         )
-    except RegistryUnavailableError:
-        stripe_session = None
-
-    if stripe_session is not None:
-        checkout_url = stripe_session.get("checkout_url")
-        output = {
-            "request_id": args.request_id,
-            "registry_base": registry_base,
-            "payment_method": "stripe",
-            "session_id": stripe_session.get("session_id"),
-            "checkout_url": checkout_url,
-            "payment_status": stripe_session.get("payment_status"),
-        }
-        if args.open_browser and isinstance(checkout_url, str):
-            try:
-                webbrowser.open(checkout_url, new=2)
-            except Exception:  # pragma: no cover
-                pass
-        if args.json:
-            print(json.dumps(output, sort_keys=True), file=stdout)
-            return 0
-        print(f"payment_method: {output['payment_method']}", file=stdout)
-        print(f"request_id: {output['request_id']}", file=stdout)
-        print(f"checkout_url: {output['checkout_url']}", file=stdout)
-        print(f"session_id: {output['session_id']}", file=stdout)
-        return 0
-
-    try:
-        status = client.get_continuity_status(args.request_id)
     except RegistryUnavailableError as exc:
         return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
-    output = {
-        "request_id": args.request_id,
-        "registry_base": registry_base,
-        "payment_method": "lnbits",
-        "status": status.get("status"),
-        "lnbits_payment_hash": status.get("lnbits_payment_hash"),
-        "lightning_invoice": status.get("lightning_invoice"),
-    }
     if args.json:
         print(json.dumps(output, sort_keys=True), file=stdout)
         return EXIT_SUCCESS
 
     print(f"payment_method: {output['payment_method']}", file=stdout)
     print(f"request_id: {output['request_id']}", file=stdout)
-    print(f"status: {output['status']}", file=stdout)
-    print(f"lnbits_payment_hash: {output['lnbits_payment_hash']}", file=stdout)
-    print(f"lightning_invoice: {output['lightning_invoice']}", file=stdout)
+    if output["payment_method"] == "stripe":
+        print(f"checkout_url: {output.get('checkout_url')}", file=stdout)
+        print(f"session_id: {output.get('session_id')}", file=stdout)
+    else:
+        print(f"status: {output.get('status')}", file=stdout)
+        print(f"lnbits_payment_hash: {output.get('lnbits_payment_hash')}", file=stdout)
+        print(f"lightning_invoice: {output.get('lightning_invoice')}", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -689,7 +773,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     _print_step(stdout, index=2, total=total_steps, title="ensuring identity anchor")
     try:
-        client.submit_identity_anchor(
+        anchor_response = client.submit_identity_anchor(
             {
                 "agent_public_key_b64": identity.public_key_b64,
                 "agent_id": identity.agent_id,
@@ -697,9 +781,36 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
             }
         )
     except RegistryUnavailableError as exc:
-        message = str(exc).lower()
-        if "409" not in message or "already" not in message:
-            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    anchor_request_id = anchor_response.get("request_id")
+    if not isinstance(anchor_request_id, str) or not anchor_request_id:
+        return _print_error(
+            stderr,
+            "registry error",
+            "invalid identity-anchor response (missing request_id)",
+            code=EXIT_NETWORK_ERROR,
+        )
+    try:
+        anchor_payment = _resolve_payment_handoff(
+            client=client,
+            request_id=anchor_request_id,
+            registry_base=registry_base,
+            payment_provider=args.payment_provider,
+            status_fetcher=client.get_identity_anchor_status,
+            success_url=None,
+            cancel_url=None,
+            open_browser=args.open_browser,
+        )
+        client.wait_for_identity_anchor(
+            request_id=anchor_request_id,
+            timeout=timeout_seconds,
+            interval=poll_seconds,
+        )
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+    except Exception as exc:
+        return _print_error(stderr, "timeout error", str(exc), code=EXIT_TIMEOUT)
 
     _print_step(stdout, index=3, total=total_steps, title="computing AMCS root and sequence")
     memory_root = args.memory_root
@@ -769,37 +880,19 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
         return _print_error(stderr, "session error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     _print_step(stdout, index=5, total=total_steps, title="resolving payment handoff")
-    payment_info: dict
-    stripe_session = None
     try:
-        stripe_session = client.create_stripe_checkout_session(request_id=request_id)
-    except RegistryUnavailableError:
-        stripe_session = None
-
-    if stripe_session is not None:
-        checkout_url = stripe_session.get("checkout_url")
-        payment_info = {
-            "method": "stripe",
-            "checkout_url": checkout_url,
-            "session_id": stripe_session.get("session_id"),
-            "payment_status": stripe_session.get("payment_status"),
-        }
-        if args.open_browser and isinstance(checkout_url, str):
-            try:
-                webbrowser.open(checkout_url, new=2)
-            except Exception:  # pragma: no cover
-                pass
-    else:
-        try:
-            status_payload = client.get_continuity_status(request_id)
-        except RegistryUnavailableError as exc:
-            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
-        payment_info = {
-            "method": "lnbits",
-            "status": status_payload.get("status"),
-            "lightning_invoice": status_payload.get("lightning_invoice"),
-            "lnbits_payment_hash": status_payload.get("lnbits_payment_hash"),
-        }
+        payment_info = _resolve_payment_handoff(
+            client=client,
+            request_id=request_id,
+            registry_base=registry_base,
+            payment_provider=args.payment_provider,
+            status_fetcher=client.get_continuity_status,
+            success_url=None,
+            cancel_url=None,
+            open_browser=args.open_browser,
+        )
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
     _print_step(stdout, index=6, total=total_steps, title="waiting for certification")
     deadline = time.time() + timeout_seconds
@@ -862,6 +955,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
         "sequence": sequence,
         "status": latest_status.get("status"),
         "payment": payment_info,
+        "anchor_payment": anchor_payment,
         "certificate_file": str(cert_path),
         "output_dir": str(output_dir),
         "verify_result": reason,
