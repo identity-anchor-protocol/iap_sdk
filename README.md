@@ -4,6 +4,16 @@ Python SDK for Identity Anchor Protocol (IAP) request signing and offline certif
 
 ## Install
 
+Published package:
+
+```bash
+python -m pip install -U pip
+python -m pip install iap-agent
+iap-agent version
+```
+
+Local editable development install:
+
 ```bash
 python -m pip install -e ".[dev]"
 ```

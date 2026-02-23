@@ -3,22 +3,21 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "iap-sdk"
+name = "iap-agent"
 version = "0.1.0"
 description = "Identity Anchor Protocol SDK for signing requests and offline certificate verification"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
   {name = "Identity Anchor Protocol"},
 ]
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["iap", "identity", "continuity", "ed25519", "agent"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -39,6 +38,8 @@ Issues = "https://github.com/identity-anchor-protocol/iap_sdk/issues"
 dev = [
   "pytest>=8.0",
   "ruff>=0.6",
+  "build>=1.2",
+  "twine>=5.0",
 ]
 
 [project.scripts]
@@ -57,7 +58,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
