@@ -95,6 +95,8 @@ See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 ## Docs
 
 - `/docs/quickstart-first-certificate.md`
+- `/docs/e2e-user-walkthrough.md`
+- `/docs/e2e-dev-local-walkthrough.md`
 - `/docs/operator-runbook-payments.md`
 - `/docs/local-amcs-privacy-model.md`
 - `/docs/lnbits-vs-stripe-flow.md`
