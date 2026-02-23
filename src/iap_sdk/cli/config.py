@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG_PATH = Path.home() / ".iap_agent" / "config.toml"
+DEFAULT_REGISTRY_BASE = "https://registry.ia-protocol.com"
+REGISTRY_BASE_ENV_VAR = "IAP_REGISTRY_BASE"
 
 
 @dataclass(frozen=True)
 class CLIConfig:
     beta_mode: bool = True
     maturity_level: str = "beta"
-    registry_base: str = "http://localhost:8080"
+    registry_base: str = DEFAULT_REGISTRY_BASE
     amcs_db_path: str = "./amcs.db"
     sessions_dir: str = str(Path.home() / ".iap_agent" / "sessions")
 
@@ -73,7 +76,9 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
     if maturity_level not in {"alpha", "beta", "stable"}:
         raise ConfigError("maturity_level must be one of: alpha, beta, stable")
 
-    registry_base = str(source.get("registry_base", "http://localhost:8080")).strip()
+    env_registry_base = os.getenv(REGISTRY_BASE_ENV_VAR)
+    configured_registry_base = str(source.get("registry_base", DEFAULT_REGISTRY_BASE)).strip()
+    registry_base = env_registry_base.strip() if env_registry_base else configured_registry_base
     if not registry_base:
         raise ConfigError("registry_base must not be empty")
 

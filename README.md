@@ -71,13 +71,13 @@ iap-agent version --json
 iap-agent init
 iap-agent init --show-public --json
 iap-agent amcs root --amcs-db ./amcs.db --agent-id ed25519:...
-iap-agent anchor issue --registry-base http://localhost:8080 --agent-name "Atlas"
-iap-agent continuity request --registry-base http://localhost:8080 --json
+iap-agent anchor issue --registry-base https://registry.ia-protocol.com --agent-name "Atlas"
+iap-agent continuity request --registry-base https://registry.ia-protocol.com --json
 iap-agent continuity pay --request-id <request-id> --open-browser
 iap-agent continuity wait --request-id <request-id> --json
 iap-agent continuity cert --request-id <request-id> --json
 iap-agent verify ./certificate.json --registry-public-key-b64 <key>
-iap-agent flow run --registry-base http://localhost:8080 --output-dir ./artifacts
+iap-agent flow run --registry-base https://registry.ia-protocol.com --output-dir ./artifacts
 ```
 
 ### CLI exit codes
@@ -111,6 +111,18 @@ Example:
 ```toml
 beta_mode = true
 maturity_level = "beta"
-registry_base = "http://localhost:8080"
+registry_base = "https://registry.ia-protocol.com"
 amcs_db_path = "./amcs.db"
+```
+
+Environment override:
+
+```bash
+export IAP_REGISTRY_BASE="https://registry.ia-protocol.com"
+```
+
+Local development override example:
+
+```toml
+registry_base = "http://localhost:8080"
 ```
