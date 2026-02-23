@@ -48,13 +48,21 @@ _SENSITIVE_FIELDS = (
 
 def _sdk_version() -> str:
     try:
-        return pkg_version("iap-sdk")
+        return pkg_version("iap-agent")
     except PackageNotFoundError:
-        return "0.0.0+local"
+        try:
+            return pkg_version("iap-sdk")
+        except PackageNotFoundError:
+            return "0.0.0+local"
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="iap-agent")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"iap-agent {_sdk_version()}",
+    )
     parser.add_argument(
         "--config",
         default=None,

@@ -6,4 +6,6 @@ __pycache__/
 .venv-cli/
 .venv-smoke/
 *.egg-info/
+dist/
+build/
 .DS_Store
