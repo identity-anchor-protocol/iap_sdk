@@ -71,15 +71,17 @@ iap-agent amcs root --amcs-db ./amcs.db --agent-id <agent_id> --json
 
 ## 4) Request Identity Anchor and pay
 
+Payment provider options:
+
+- `--payment-provider auto`: try Stripe first, then Lightning fallback.
+- `--payment-provider stripe`: force Stripe checkout.
+- `--payment-provider lightning-btc`: force Lightning invoice flow.
+- `--payment-provider lnbits`: legacy alias for `lightning-btc` (kept for compatibility).
+
 Use automatic handoff (Stripe first, Lightning fallback):
 
 ```bash
-iap-agent anchor issue \
-  --registry-base "$REGISTRY_BASE" \
-  --agent-name "Atlas" \
-  --payment-provider auto \
-  --open-browser \
-  --json
+iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --json
 ```
 
 Save `request_id` from output.
@@ -90,15 +92,7 @@ If Lightning fallback is returned, pay the `payment.lightning_invoice`.
 Optional: wait directly from the same command:
 
 ```bash
-iap-agent anchor issue \
-  --registry-base "$REGISTRY_BASE" \
-  --agent-name "Atlas" \
-  --payment-provider auto \
-  --open-browser \
-  --wait \
-  --timeout-seconds 600 \
-  --poll-seconds 5 \
-  --json
+iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --wait --timeout-seconds 600 --poll-seconds 5 --json
 ```
 
 ## 5) Request Continuity and pay
@@ -106,21 +100,13 @@ iap-agent anchor issue \
 Create request:
 
 ```bash
-iap-agent continuity request \
-  --registry-base "$REGISTRY_BASE" \
-  --amcs-db ./amcs.db \
-  --json
+iap-agent continuity request --registry-base "$REGISTRY_BASE" --amcs-db ./amcs.db --json
 ```
 
 Copy the `request_id`, then request payment handoff:
 
 ```bash
-iap-agent continuity pay \
-  --registry-base "$REGISTRY_BASE" \
-  --request-id <request_id> \
-  --payment-provider auto \
-  --open-browser \
-  --json
+iap-agent continuity pay --registry-base "$REGISTRY_BASE" --request-id <request_id> --payment-provider auto --open-browser --json
 ```
 
 If Stripe is used, complete checkout in browser.
@@ -131,11 +117,7 @@ If Lightning is used, pay `lightning_invoice`.
 You can submit continuity with explicit values:
 
 ```bash
-iap-agent continuity request \
-  --registry-base "$REGISTRY_BASE" \
-  --memory-root <64-lowercase-hex> \
-  --sequence <integer>=1+ \
-  --json
+iap-agent continuity request --registry-base "$REGISTRY_BASE" --memory-root <64-lowercase-hex> --sequence <integer>=1+ --json
 ```
 
 Manual mode implications:
@@ -158,19 +140,8 @@ Why AMCS-backed mode is better:
 ## 6) Wait for certification, fetch certificate, verify
 
 ```bash
-iap-agent continuity wait \
-  --registry-base "$REGISTRY_BASE" \
-  --request-id <request_id> \
-  --timeout-seconds 600 \
-  --poll-seconds 5 \
-  --json
-
-iap-agent continuity cert \
-  --registry-base "$REGISTRY_BASE" \
-  --request-id <request_id> \
-  --output-file ./certificate.json \
-  --json
-
+iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <request_id> --timeout-seconds 600 --poll-seconds 5 --json
+iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request_id> --output-file ./certificate.json --json
 iap-agent verify ./certificate.json --registry-base "$REGISTRY_BASE" --json
 ```
 

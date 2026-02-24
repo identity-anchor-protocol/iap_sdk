@@ -129,9 +129,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     anchor_issue.add_argument(
         "--payment-provider",
-        choices=("auto", "stripe", "lnbits"),
+        choices=("auto", "stripe", "lightning-btc", "lnbits"),
         default="auto",
-        help="Choose payment handoff provider",
+        help="Choose payment handoff provider (lnbits is legacy alias for lightning-btc)",
     )
     anchor_issue.add_argument("--success-url", default=None)
     anchor_issue.add_argument("--cancel-url", default=None)
@@ -178,9 +178,9 @@ def _build_parser() -> argparse.ArgumentParser:
     continuity_pay.add_argument("--cancel-url", default=None)
     continuity_pay.add_argument(
         "--payment-provider",
-        choices=("auto", "stripe", "lnbits"),
+        choices=("auto", "stripe", "lightning-btc", "lnbits"),
         default="auto",
-        help="Choose payment handoff provider",
+        help="Choose payment handoff provider (lnbits is legacy alias for lightning-btc)",
     )
     continuity_pay.add_argument("--open-browser", action="store_true")
     continuity_pay.add_argument("--json", action="store_true", help="Print payment details as JSON")
@@ -238,9 +238,9 @@ def _build_parser() -> argparse.ArgumentParser:
     flow_run.add_argument("--poll-seconds", type=int, default=5)
     flow_run.add_argument(
         "--payment-provider",
-        choices=("auto", "stripe", "lnbits"),
+        choices=("auto", "stripe", "lightning-btc", "lnbits"),
         default="auto",
-        help="Choose payment handoff provider",
+        help="Choose payment handoff provider (lnbits is legacy alias for lightning-btc)",
     )
     flow_run.add_argument("--open-browser", action="store_true")
     flow_run.add_argument(
@@ -469,7 +469,11 @@ def _resolve_payment_handoff(
     cancel_url: str | None,
     open_browser: bool,
 ) -> dict:
-    if payment_provider in {"auto", "stripe"}:
+    canonical_payment_provider = (
+        "lightning-btc" if payment_provider == "lnbits" else payment_provider
+    )
+
+    if canonical_payment_provider in {"auto", "stripe"}:
         try:
             stripe_session = client.create_stripe_checkout_session(
                 request_id=request_id,
@@ -495,13 +499,14 @@ def _resolve_payment_handoff(
                 "checkout_url": checkout_url,
                 "payment_status": stripe_session.get("payment_status"),
             }
-        if payment_provider == "stripe":
+        if canonical_payment_provider == "stripe":
             raise RegistryUnavailableError("registry request failed: stripe checkout unavailable")
 
     status = status_fetcher(request_id)
     return {
-        "payment_method": "lnbits",
-        "method": "lnbits",
+        "payment_method": "lightning-btc",
+        "method": "lightning-btc",
+        "provider_backend": "lnbits",
         "request_id": request_id,
         "registry_base": registry_base,
         "status": status.get("status"),
