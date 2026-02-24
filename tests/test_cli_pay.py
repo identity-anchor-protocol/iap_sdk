@@ -43,7 +43,7 @@ def test_continuity_pay_prefers_stripe(monkeypatch) -> None:
     assert payload["session_id"] == "cs_123"
 
 
-def test_continuity_pay_falls_back_to_lnbits(monkeypatch) -> None:
+def test_continuity_pay_falls_back_to_lightning_btc(monkeypatch) -> None:
     out = io.StringIO()
     err = io.StringIO()
 
@@ -73,8 +73,45 @@ def test_continuity_pay_falls_back_to_lnbits(monkeypatch) -> None:
     rc = main(["continuity", "pay", "--request-id", "req-2", "--json"], stdout=out, stderr=err)
     assert rc == 0
     payload = json.loads(out.getvalue())
-    assert payload["payment_method"] == "lnbits"
+    assert payload["payment_method"] == "lightning-btc"
+    assert payload["provider_backend"] == "lnbits"
     assert payload["lnbits_payment_hash"] == "hash-2"
+
+
+def test_continuity_pay_accepts_legacy_lnbits_alias(monkeypatch) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    class _Client:
+        def __init__(self, *, base_url: str) -> None:
+            self.base_url = base_url
+
+        def get_continuity_status(self, request_id: str) -> dict:
+            assert request_id == "req-legacy"
+            return {
+                "status": "WAITING_PAYMENT",
+                "lnbits_payment_hash": "legacy-hash",
+                "lightning_invoice": "lnbc1legacy...",
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "continuity",
+            "pay",
+            "--request-id",
+            "req-legacy",
+            "--payment-provider",
+            "lnbits",
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["payment_method"] == "lightning-btc"
 
 
 def test_continuity_pay_returns_error_when_registry_unavailable(monkeypatch) -> None:
