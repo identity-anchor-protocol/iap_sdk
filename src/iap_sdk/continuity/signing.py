@@ -7,6 +7,7 @@ import json
 CONTINUITY_ISSUED_INTENT = "IAP-Registry-Continuity-Request"
 IDENTITY_ANCHOR_ISSUED_INTENT = "IAP-Registry-IdentityAnchor-Request"
 LINEAGE_ISSUED_INTENT = "IAP-Registry-Lineage-Request"
+LINEAGE_PARENT_CONSENT_ISSUED_INTENT = "IAP-Registry-Lineage-Parent-Consent"
 KEY_ROTATION_ISSUED_INTENT = "IAP-Registry-KeyRotation-Request"
 LIVENESS_ISSUED_INTENT = "IAP-Registry-Liveness-Challenge-Response"
 
@@ -137,11 +138,43 @@ def build_lineage_request_to_sign(payload: dict) -> bytes:
             "agent_public_key_b64": payload["agent_public_key_b64"],
             "parent_agent_id": payload.get("parent_agent_id"),
             "fork_event_hash": payload.get("fork_event_hash"),
+            "lineage_proof_policy": payload.get("lineage_proof_policy", "parent_anchor_exists"),
+            "parent_consent_signature_b64": payload.get("parent_consent_signature_b64"),
             "issued_intent": issued_intent,
             "nonce": payload["nonce"],
             "created_at": payload["created_at"],
         }
     )
+
+
+def build_lineage_parent_consent_to_sign(payload: dict) -> bytes:
+    """Build canonical bytes for parent-consent signature in lineage requests."""
+    _reject_floats(payload)
+    required = (
+        "parent_agent_id",
+        "agent_id",
+        "agent_public_key_b64",
+        "nonce",
+        "created_at",
+    )
+    for field in required:
+        if field not in payload or not isinstance(payload[field], str) or not payload[field]:
+            raise ValueError(f"{field} must be a non-empty string")
+
+    issued_intent = payload.get("issued_intent", LINEAGE_PARENT_CONSENT_ISSUED_INTENT)
+    if issued_intent != LINEAGE_PARENT_CONSENT_ISSUED_INTENT:
+        raise ValueError("issued_intent must be IAP-Registry-Lineage-Parent-Consent")
+
+    canonical_payload = {
+        "parent_agent_id": payload["parent_agent_id"],
+        "agent_id": payload["agent_id"],
+        "agent_public_key_b64": payload["agent_public_key_b64"],
+        "fork_event_hash": payload.get("fork_event_hash"),
+        "issued_intent": issued_intent,
+        "nonce": payload["nonce"],
+        "created_at": payload["created_at"],
+    }
+    return _canonical_bytes(canonical_payload)
 
 
 def build_key_rotation_request_to_sign(payload: dict) -> bytes:

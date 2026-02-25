@@ -28,11 +28,13 @@ from iap_sdk.requests import (
     build_continuity_request_legacy,
     build_identity_anchor_request,
     build_key_rotation_request,
+    build_lineage_parent_consent,
     build_lineage_request,
     check_sequence_integrity,
     sign_continuity_request,
     sign_identity_anchor_request,
     sign_key_rotation_request,
+    sign_lineage_parent_consent,
     sign_lineage_request,
 )
 from iap_sdk.transparency import get_inclusion_proof, verify_inclusion_proof
@@ -67,6 +69,8 @@ __all__ = [
     "build_identity_anchor_request",
     "sign_continuity_request",
     "sign_identity_anchor_request",
+    "build_lineage_parent_consent",
+    "sign_lineage_parent_consent",
     "build_lineage_request",
     "sign_lineage_request",
     "build_key_rotation_request",
