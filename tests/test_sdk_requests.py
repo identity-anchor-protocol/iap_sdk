@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from iap_sdk.continuity.signing import (
+    build_identity_anchor_request_to_sign,
     build_key_rotation_request_to_sign,
     build_lineage_request_to_sign,
     build_request_to_sign,
@@ -21,10 +22,12 @@ from iap_sdk.crypto.ed25519_verify import verify_ed25519
 from iap_sdk.errors import SequenceViolationError
 from iap_sdk.requests import (
     build_continuity_request,
+    build_identity_anchor_request,
     build_key_rotation_request,
     build_lineage_request,
     check_sequence_integrity,
     sign_continuity_request,
+    sign_identity_anchor_request,
     sign_key_rotation_request,
     sign_lineage_request,
 )
@@ -75,6 +78,20 @@ def test_sign_lineage_request_produces_valid_signature() -> None:
     signed = sign_lineage_request(payload, private_bytes)
     signature = base64.b64decode(signed["agent_signature_b64"])
     canonical = build_lineage_request_to_sign(signed)
+    public_key = base64.b64decode(public_key_b64)
+    assert verify_ed25519(signature, canonical, public_key) is True
+
+
+def test_sign_identity_anchor_request_produces_valid_signature() -> None:
+    private_bytes, public_key_b64, agent_id = _identity()
+    payload = build_identity_anchor_request(
+        agent_public_key_b64=public_key_b64,
+        agent_id=agent_id,
+        metadata={"agent_name": "Atlas"},
+    )
+    signed = sign_identity_anchor_request(payload, private_bytes)
+    signature = base64.b64decode(signed["agent_signature_b64"])
+    canonical = build_identity_anchor_request_to_sign(signed)
     public_key = base64.b64decode(public_key_b64)
     assert verify_ed25519(signature, canonical, public_key) is True
 

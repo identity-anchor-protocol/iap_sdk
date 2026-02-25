@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 CONTINUITY_ISSUED_INTENT = "IAP-Registry-Continuity-Request"
+IDENTITY_ANCHOR_ISSUED_INTENT = "IAP-Registry-IdentityAnchor-Request"
 LINEAGE_ISSUED_INTENT = "IAP-Registry-Lineage-Request"
 KEY_ROTATION_ISSUED_INTENT = "IAP-Registry-KeyRotation-Request"
 LIVENESS_ISSUED_INTENT = "IAP-Registry-Liveness-Challenge-Response"
@@ -99,6 +100,25 @@ def build_request_to_sign(payload: dict) -> bytes:
     }
     if payload.get("agent_custody_class") is not None:
         canonical_payload["agent_custody_class"] = payload["agent_custody_class"]
+    return _canonical_bytes(canonical_payload)
+
+
+def build_identity_anchor_request_to_sign(payload: dict) -> bytes:
+    """Build canonical bytes for identity-anchor request signing."""
+    _reject_floats(payload)
+    _assert_common(payload)
+
+    issued_intent = payload.get("issued_intent", IDENTITY_ANCHOR_ISSUED_INTENT)
+    if issued_intent != IDENTITY_ANCHOR_ISSUED_INTENT:
+        raise ValueError("issued_intent must be IAP-Registry-IdentityAnchor-Request")
+
+    canonical_payload = {
+        "agent_id": payload["agent_id"],
+        "agent_public_key_b64": payload["agent_public_key_b64"],
+        "issued_intent": issued_intent,
+        "nonce": payload["nonce"],
+        "created_at": payload["created_at"],
+    }
     return _canonical_bytes(canonical_payload)
 
 

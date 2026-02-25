@@ -98,3 +98,29 @@ def test_init_show_public_json_omits_private_key(tmp_path) -> None:
     payload = json.loads(out.getvalue())
     assert payload["created"] is True
     assert "private_key_b64" not in payload
+
+
+def test_init_json_omits_private_key_by_default(tmp_path) -> None:
+    identity_path = tmp_path / "identity.json"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(["init", "--identity-file", str(identity_path), "--json"], stdout=out, stderr=err)
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert "private_key_b64" not in payload
+
+
+def test_init_json_includes_private_key_with_explicit_flag(tmp_path) -> None:
+    identity_path = tmp_path / "identity.json"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(
+        ["init", "--identity-file", str(identity_path), "--json", "--export-private-key"],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert isinstance(payload["private_key_b64"], str)

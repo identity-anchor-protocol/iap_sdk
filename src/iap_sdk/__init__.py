@@ -26,10 +26,12 @@ from iap_sdk.offline_verify import verify_certificate_dict
 from iap_sdk.requests import (
     build_continuity_request,
     build_continuity_request_legacy,
+    build_identity_anchor_request,
     build_key_rotation_request,
     build_lineage_request,
     check_sequence_integrity,
     sign_continuity_request,
+    sign_identity_anchor_request,
     sign_key_rotation_request,
     sign_lineage_request,
 )
@@ -62,7 +64,9 @@ __all__ = [
     "compute_manifest_hash",
     "build_continuity_request",
     "build_continuity_request_legacy",
+    "build_identity_anchor_request",
     "sign_continuity_request",
+    "sign_identity_anchor_request",
     "build_lineage_request",
     "sign_lineage_request",
     "build_key_rotation_request",

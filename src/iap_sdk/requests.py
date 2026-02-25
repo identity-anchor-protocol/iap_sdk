@@ -11,8 +11,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from iap_sdk.continuity.signing import (
     CONTINUITY_ISSUED_INTENT,
+    IDENTITY_ANCHOR_ISSUED_INTENT,
     KEY_ROTATION_ISSUED_INTENT,
     LINEAGE_ISSUED_INTENT,
+    build_identity_anchor_request_to_sign,
     build_key_rotation_request_to_sign,
     build_lineage_request_to_sign,
     build_request_to_sign,
@@ -67,6 +69,33 @@ def build_continuity_request(
 def sign_continuity_request(payload: dict, private_key_bytes: bytes) -> dict:
     payload_to_sign = dict(payload)
     canonical = build_request_to_sign(payload_to_sign)
+    signature = Ed25519PrivateKey.from_private_bytes(private_key_bytes).sign(canonical)
+    payload_to_sign["agent_signature_b64"] = base64.b64encode(signature).decode("ascii")
+    return payload_to_sign
+
+
+def build_identity_anchor_request(
+    *,
+    agent_public_key_b64: str,
+    agent_id: str,
+    metadata: dict[str, str] | None = None,
+    nonce: str | None = None,
+    created_at: str | None = None,
+) -> dict:
+    return {
+        "agent_public_key_b64": agent_public_key_b64,
+        "agent_id": agent_id,
+        "metadata": metadata or {},
+        "nonce": nonce or str(uuid4()),
+        "created_at": created_at or _utc_now_iso(),
+        "issued_intent": IDENTITY_ANCHOR_ISSUED_INTENT,
+        "agent_signature_b64": "",
+    }
+
+
+def sign_identity_anchor_request(payload: dict, private_key_bytes: bytes) -> dict:
+    payload_to_sign = dict(payload)
+    canonical = build_identity_anchor_request_to_sign(payload_to_sign)
     signature = Ed25519PrivateKey.from_private_bytes(private_key_bytes).sign(canonical)
     payload_to_sign["agent_signature_b64"] = base64.b64encode(signature).decode("ascii")
     return payload_to_sign

@@ -3,14 +3,19 @@ from __future__ import annotations
 import io
 import json
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
 from iap_sdk.cli.identity import IdentityError
 from iap_sdk.cli.main import main
 from iap_sdk.errors import RegistryUnavailableError
 
 
 class _Identity:
+    _private = Ed25519PrivateKey.generate()
     agent_id = "ed25519:test-agent"
     public_key_b64 = "PUBKEY"
+    private_key_bytes = _private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
 
 
 def test_anchor_issue_success_json(monkeypatch) -> None:
