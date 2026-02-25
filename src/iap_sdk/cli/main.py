@@ -22,7 +22,12 @@ from iap_sdk.cli.sessions import SessionError, save_session_record
 from iap_sdk.client import RegistryClient
 from iap_sdk.errors import RegistryUnavailableError, SDKTimeoutError
 from iap_sdk.manifest import build_identity_manifest
-from iap_sdk.requests import build_continuity_request, sign_continuity_request
+from iap_sdk.requests import (
+    build_continuity_request,
+    build_identity_anchor_request,
+    sign_continuity_request,
+    sign_identity_anchor_request,
+)
 from iap_sdk.verify import verify_certificate_file
 
 EXIT_SUCCESS = 0
@@ -84,6 +89,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--show-public",
         action="store_true",
         help="Print only public fields (agent_id + public_key_b64)",
+    )
+    init.add_argument(
+        "--export-private-key",
+        action="store_true",
+        help="Include private_key_b64 in output (sensitive; avoid in shared logs)",
     )
     init.add_argument("--json", action="store_true", help="Print identity details as JSON")
     verify = sub.add_parser("verify", help="Verify certificate offline")
@@ -322,7 +332,7 @@ def _run_init(*, args, stdout, stderr) -> int:
         "agent_id": identity.agent_id,
         "public_key_b64": identity.public_key_b64,
     }
-    if not args.show_public:
+    if args.export_private_key:
         payload["private_key_b64"] = identity.private_key_b64
 
     if args.json:
@@ -333,7 +343,7 @@ def _run_init(*, args, stdout, stderr) -> int:
     print(f"created: {str(payload['created']).lower()}", file=stdout)
     print(f"agent_id: {payload['agent_id']}", file=stdout)
     print(f"public_key_b64: {payload['public_key_b64']}", file=stdout)
-    if not args.show_public:
+    if args.export_private_key:
         print("private_key_b64: [hidden in non-json output]", file=stdout)
     return EXIT_SUCCESS
 
@@ -380,11 +390,14 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     registry_base = args.registry_base or config.registry_base
     client = RegistryClient(base_url=registry_base)
-    payload = {
-        "agent_public_key_b64": identity.public_key_b64,
-        "agent_id": identity.agent_id,
-        "metadata": {"agent_name": args.agent_name},
-    }
+    payload = sign_identity_anchor_request(
+        build_identity_anchor_request(
+            agent_public_key_b64=identity.public_key_b64,
+            agent_id=identity.agent_id,
+            metadata={"agent_name": args.agent_name},
+        ),
+        identity.private_key_bytes,
+    )
 
     try:
         response = client.submit_identity_anchor(payload)
