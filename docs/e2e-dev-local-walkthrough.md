@@ -93,10 +93,10 @@ iap-agent amcs root --amcs-db ./amcs.db --agent-id <agent_id> --json
 
 ## Step 3: Identity Anchor request + payment
 
-LNBits local-dev path:
+Lightning local-dev path:
 
 ```bash
-iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider lnbits --json
+iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider lightning-btc --json
 ```
 
 From the JSON output, copy:
@@ -109,7 +109,10 @@ Pay invoice in LNBits wallet.
 If your local webhook is not reachable automatically, force webhook callback:
 
 ```bash
-curl -s -X POST "http://localhost:8080/v1/webhooks/lnbits?secret=$LNBITS_WEBHOOK_SECRET" -H "Content-Type: application/json" -d '{"payment_hash":"<payment_hash_from_anchor_request>"}'
+curl -s -X POST "http://localhost:8080/v1/webhooks/lnbits" \
+  -H "Content-Type: application/json" \
+  -H "x-lnbits-webhook-secret: $LNBITS_WEBHOOK_SECRET" \
+  -d '{"payment_hash":"<payment_hash_from_anchor_request>"}'
 ```
 
 Check anchor status:
@@ -140,7 +143,10 @@ Pay invoice in LNBits wallet.
 If needed, force webhook callback:
 
 ```bash
-curl -s -X POST "http://localhost:8080/v1/webhooks/lnbits?secret=$LNBITS_WEBHOOK_SECRET" -H "Content-Type: application/json" -d '{"payment_hash":"<payment_hash_from_continuity_request>"}'
+curl -s -X POST "http://localhost:8080/v1/webhooks/lnbits" \
+  -H "Content-Type: application/json" \
+  -H "x-lnbits-webhook-secret: $LNBITS_WEBHOOK_SECRET" \
+  -d '{"payment_hash":"<payment_hash_from_continuity_request>"}'
 ```
 
 Wait for certification:
@@ -158,7 +164,8 @@ iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <continu
 Verify:
 
 ```bash
-iap-agent verify ./certificate.json --registry-base "$REGISTRY_BASE" --json
+REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
+iap-agent verify ./certificate.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
 ```
 
 Expected: `{"ok": true, "reason": "ok"}`.
@@ -171,3 +178,4 @@ Expected: `{"ok": true, "reason": "ok"}`.
   - `iap-agent continuity pay ...`
 - If Stripe is unavailable, fallback is:
   - `--payment-provider auto` (tries Stripe, then LNBits)
+- `--payment-provider lnbits` is still accepted as a legacy alias for `lightning-btc`.

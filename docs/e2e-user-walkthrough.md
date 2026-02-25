@@ -5,8 +5,8 @@ This walkthrough runs a real user flow from zero to a verified continuity certif
 What you do:
 
 1. Create your local agent identity (key pair).
-2. Store `AGENT.md` and `SOUL.md` into local `amcs.db`.
-3. Read `memory_root` and `sequence` from AMCS.
+2. Store e.g. `AGENT.md` and `SOUL.md` into local `amcs.db`.
+3. Read `memory_root` and `sequence` from AMCS (Agent Memory Canonicalization Standard).
 4. Request and pay for Identity Anchor.
 5. Request and pay for Continuity.
 6. Download and verify the certificate offline.
@@ -37,7 +37,7 @@ Keep the returned `agent_id` for next steps.
 
 ## 2) Create agent files and store them in AMCS
 
-Create files:
+Create or use exiting files for your agent (these are two examples):
 
 ```bash
 cat > AGENT.md <<'EOF'
@@ -51,7 +51,7 @@ Help user reliably, safely, and with continuity.
 EOF
 ```
 
-Append both files into local AMCS:
+Append both files into local AMCS database:
 
 ```bash
 python scripts/append_agent_files_to_amcs.py \
@@ -69,16 +69,16 @@ The command prints the latest memory root.
 iap-agent amcs root --amcs-db ./amcs.db --agent-id <agent_id> --json
 ```
 
-## 4) Request Identity Anchor and pay
+## 4) Request Identity Anchor and pay for the certificate issuence
 
 Payment provider options:
 
 - `--payment-provider auto`: try Stripe first, then Lightning fallback.
 - `--payment-provider stripe`: force Stripe checkout.
 - `--payment-provider lightning-btc`: force Lightning invoice flow.
-- `--payment-provider lnbits`: legacy alias for `lightning-btc` (kept for compatibility).
 
-Use automatic handoff (Stripe first, Lightning fallback):
+
+Example with auto handoff (Stripe first, Lightning fallback):
 
 ```bash
 iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --json
@@ -95,7 +95,7 @@ Optional: wait directly from the same command:
 iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --wait --timeout-seconds 600 --poll-seconds 5 --json
 ```
 
-## 5) Request Continuity and pay
+## 5) Request Continuity Certificate and pay for issuence
 
 Create request:
 
@@ -114,7 +114,7 @@ If Lightning is used, pay `lightning_invoice`.
 
 ### Advanced: manual continuity input (without AMCS read)
 
-You can submit continuity with explicit values:
+You can submit continuity requests with explicit values:
 
 ```bash
 iap-agent continuity request --registry-base "$REGISTRY_BASE" --memory-root <64-lowercase-hex> --sequence <integer>=1+ --json
@@ -142,7 +142,8 @@ Why AMCS-backed mode is better:
 ```bash
 iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <request_id> --timeout-seconds 600 --poll-seconds 5 --json
 iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request_id> --output-file ./certificate.json --json
-iap-agent verify ./certificate.json --registry-base "$REGISTRY_BASE" --json
+REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
+iap-agent verify ./certificate.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
 ```
 
 Expected verify output shape:
