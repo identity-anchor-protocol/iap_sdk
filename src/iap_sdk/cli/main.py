@@ -289,6 +289,7 @@ def _run_version(*, config: CLIConfig, as_json: bool, stdout) -> int:
         "maturity_level": config.maturity_level,
         "beta_mode": config.beta_mode,
         "default_registry_base": config.registry_base,
+        "has_pinned_registry_public_key": bool(config.registry_public_key_b64),
     }
     if as_json:
         print(json.dumps(payload, sort_keys=True), file=stdout)
@@ -721,8 +722,18 @@ def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 
 def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
-    registry_public_key_b64 = args.registry_public_key_b64
+    registry_public_key_b64 = args.registry_public_key_b64 or config.registry_public_key_b64
     if registry_public_key_b64 is None:
+        if args.profile == "strict":
+            return _print_error(
+                stderr,
+                "verify error",
+                (
+                    "strict profile requires a pinned registry key; provide "
+                    "--registry-public-key-b64 or set cli.registry_public_key_b64 in config"
+                ),
+                code=EXIT_VALIDATION_ERROR,
+            )
         registry_base = args.registry_base or config.registry_base
         client = RegistryClient(base_url=registry_base)
         try:

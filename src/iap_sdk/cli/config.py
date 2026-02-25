@@ -19,6 +19,7 @@ class CLIConfig:
     registry_base: str = DEFAULT_REGISTRY_BASE
     amcs_db_path: str = "./amcs.db"
     sessions_dir: str = str(Path.home() / ".iap_agent" / "sessions")
+    registry_public_key_b64: str | None = None
 
 
 class ConfigError(ValueError):
@@ -90,6 +91,11 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
     sessions_dir = str(source.get("sessions_dir", default_sessions_dir)).strip()
     if not sessions_dir:
         raise ConfigError("sessions_dir must not be empty")
+    registry_public_key_b64_raw = source.get("registry_public_key_b64")
+    if registry_public_key_b64_raw is None:
+        registry_public_key_b64 = None
+    else:
+        registry_public_key_b64 = str(registry_public_key_b64_raw).strip() or None
 
     return CLIConfig(
         beta_mode=beta_mode,
@@ -97,4 +103,5 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         registry_base=registry_base,
         amcs_db_path=amcs_db_path,
         sessions_dir=sessions_dir,
+        registry_public_key_b64=registry_public_key_b64,
     )
