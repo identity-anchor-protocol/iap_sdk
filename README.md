@@ -1,6 +1,6 @@
 # iap-sdk
 
-Python SDK for Identity Anchor Protocol (IAP) request signing and offline certificate verification.
+Python SDK for Identity Anchor Protocol (IAP) request signing, state continuity tracking, and offline verification.
 
 ## Install
 
@@ -9,6 +9,7 @@ Published package:
 ```bash
 python -m pip install -U pip
 python -m pip install iap-agent
+iap version
 iap-agent version
 ```
 
@@ -25,6 +26,9 @@ python -m pip install -e ".[dev]"
 - Registry API client helpers
 - Offline certificate verification (including identity-anchor checks)
 - Liveness and transparency helper utilities
+
+IAP tracks agent state evolution.
+It does not reduce LLM sampling randomness.
 
 ## Quick example
 
@@ -76,18 +80,15 @@ Install editable and run:
 
 ```bash
 python -m pip install -e ".[dev]"
-iap-agent version
-iap-agent version --json
-iap-agent init
-iap-agent init --show-public --json
-iap-agent amcs root --amcs-db ./amcs.db --agent-id ed25519:...
-iap-agent anchor issue --registry-base https://registry.ia-protocol.com --agent-name "Atlas"
+iap version
+iap init
+iap track
+iap anchor --local-only
+iap commit "updated agent objective"
+iap verify ./certificate.json --registry-public-key-b64 <key>
+
+# Legacy CLI remains supported in v0.1.x:
 iap-agent continuity request --registry-base https://registry.ia-protocol.com --json
-iap-agent continuity pay --request-id <request-id> --open-browser
-iap-agent continuity wait --request-id <request-id> --json
-iap-agent continuity cert --request-id <request-id> --json
-iap-agent verify ./certificate.json --registry-public-key-b64 <key>
-iap-agent flow run --registry-base https://registry.ia-protocol.com --output-dir ./artifacts
 ```
 
 ### CLI exit codes
@@ -112,6 +113,20 @@ See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 - `/docs/lnbits-vs-stripe-flow.md`
 - `/docs/troubleshooting.md`
 - `/docs/migration-cli-first.md`
+- `/docs/transition-terminology.md`
+- `/examples/state-drift-demo/README.md`
+
+## Drift demo
+
+Run the transition demo in under 5 minutes:
+
+```bash
+python examples/state-drift-demo/demo.py
+```
+
+Expected:
+- `verify_before_ok=True`
+- `verify_after_ok=False`
 
 ### Beta mode config
 

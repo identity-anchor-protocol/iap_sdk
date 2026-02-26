@@ -40,11 +40,11 @@ iap-agent continuity wait --request-id <request-id> --timeout-seconds 600
 - fetch current registry public key:
 
 ```bash
-iap-agent verify ./certificate.json --registry-base https://registry.ia-protocol.com
+iap-agent verify ./continuity_record.json --registry-base https://registry.ia-protocol.com
 ```
 
 - if strict lineage checks are required, provide previous certificate and identity anchor:
 
 ```bash
-iap-agent verify ./certificate.json --profile strict --identity-anchor ./identity_anchor.json --previous-certificate ./prev_cert.json
+iap-agent verify ./continuity_record.json --profile strict --identity-anchor ./identity_anchor_record.json --previous-certificate ./prev_continuity_record.json
 ```

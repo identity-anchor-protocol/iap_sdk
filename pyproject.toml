@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
   "cryptography>=42",
   "pydantic>=2.7",
+  "PyYAML>=6.0",
   "requests>=2.31",
 ]
 
@@ -44,6 +45,7 @@ dev = [
 
 [project.scripts]
 iap-agent = "iap_sdk.cli.main:main"
+iap = "iap_sdk.cli.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

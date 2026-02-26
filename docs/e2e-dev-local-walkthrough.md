@@ -5,7 +5,7 @@ This version is explicit about:
 - which app runs in which terminal
 - which virtual environment to activate
 - where files are stored
-- how to force local webhook completion in LNBits dev mode
+- how to complete payment in Stripe or Lightning/OpenNode mode
 
 Assumed folders:
 
@@ -102,18 +102,10 @@ iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --p
 From the JSON output, copy:
 
 - `request_id`
-- `payment.lnbits_payment_hash`
+- `payment.lnbits_payment_hash` (legacy field name; backend may be OpenNode)
 - `payment.lightning_invoice`
 
-Pay invoice in LNBits wallet.  
-If your local webhook is not reachable automatically, force webhook callback:
-
-```bash
-curl -s -X POST "http://localhost:8080/v1/webhooks/lnbits" \
-  -H "Content-Type: application/json" \
-  -H "x-lnbits-webhook-secret: $LNBITS_WEBHOOK_SECRET" \
-  -d '{"payment_hash":"<payment_hash_from_anchor_request>"}'
-```
+Pay invoice in your Lightning wallet.
 
 Check anchor status:
 
@@ -136,18 +128,10 @@ iap-agent continuity request --registry-base "$REGISTRY_BASE" --amcs-db ./amcs.d
 From the JSON output, copy:
 
 - `request_id`
-- `payment.lnbits_payment_hash`
+- `payment.lnbits_payment_hash` (legacy field name; backend may be OpenNode)
 - `payment.lightning_invoice`
 
-Pay invoice in LNBits wallet.  
-If needed, force webhook callback:
-
-```bash
-curl -s -X POST "http://localhost:8080/v1/webhooks/lnbits" \
-  -H "Content-Type: application/json" \
-  -H "x-lnbits-webhook-secret: $LNBITS_WEBHOOK_SECRET" \
-  -d '{"payment_hash":"<payment_hash_from_continuity_request>"}'
-```
+Pay invoice in your Lightning wallet.
 
 Wait for certification:
 
@@ -158,14 +142,14 @@ iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <continu
 Fetch certificate bundle:
 
 ```bash
-iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <continuity_request_id> --output-file ./certificate.json --json
+iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <continuity_request_id> --output-file ./continuity_record.json --json
 ```
 
 Verify:
 
 ```bash
 REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
-iap-agent verify ./certificate.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
+iap-agent verify ./continuity_record.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
 ```
 
 Expected: `{"ok": true, "reason": "ok"}`.
@@ -173,9 +157,10 @@ Expected: `{"ok": true, "reason": "ok"}`.
 ## Stripe local-dev notes
 
 - For Stripe local webhook testing, run Stripe CLI in Terminal C and forward to `http://localhost:8080/v1/webhooks/stripe`.
+- For OpenNode local webhook testing, use a reachable callback URL configured in registry settings (`OPENNODE_WEBHOOK_URL`) and OpenNode dashboard webhook configuration.
 - Use `--payment-provider stripe` with:
   - `iap-agent anchor issue ...`
   - `iap-agent continuity pay ...`
 - If Stripe is unavailable, fallback is:
-  - `--payment-provider auto` (tries Stripe, then LNBits)
+  - `--payment-provider auto` (tries Stripe, then Lightning/OpenNode)
 - `--payment-provider lnbits` is still accepted as a legacy alias for `lightning-btc`.
