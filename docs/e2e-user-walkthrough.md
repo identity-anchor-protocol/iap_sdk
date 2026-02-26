@@ -1,6 +1,6 @@
 # End-to-End Walkthrough (User-Friendly)
 
-This walkthrough runs a real user flow from zero to a verified continuity certificate.
+This walkthrough runs a real user flow from zero to a verified continuity record.
 
 What you do:
 
@@ -9,7 +9,7 @@ What you do:
 3. Read `memory_root` and `sequence` from AMCS (Agent Memory Canonicalization Standard).
 4. Request and pay for Identity Anchor.
 5. Request and pay for Continuity.
-6. Download and verify the certificate offline.
+6. Download and verify the continuity record offline.
 
 ## 0) Fresh setup
 
@@ -69,7 +69,7 @@ The command prints the latest memory root.
 iap-agent amcs root --amcs-db ./amcs.db --agent-id <agent_id> --json
 ```
 
-## 4) Request Identity Anchor and pay for the certificate issuence
+## 4) Request Identity Anchor and pay for issuance
 
 Payment provider options:
 
@@ -95,7 +95,7 @@ Optional: wait directly from the same command:
 iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --wait --timeout-seconds 600 --poll-seconds 5 --json
 ```
 
-## 5) Request Continuity Certificate and pay for issuence
+## 5) Request Continuity and pay for issuance
 
 Create request:
 
@@ -137,13 +137,13 @@ Why AMCS-backed mode is better:
 - It is safer for sensitive workflows because you avoid hand-editing cryptographic continuity
   inputs.
 
-## 6) Wait for certification, fetch certificate, verify
+## 6) Wait for certification, fetch continuity record, verify
 
 ```bash
 iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <request_id> --timeout-seconds 600 --poll-seconds 5 --json
-iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request_id> --output-file ./certificate.json --json
+iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request_id> --output-file ./continuity_record.json --json
 REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
-iap-agent verify ./certificate.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
+iap-agent verify ./continuity_record.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
 ```
 
 Expected verify output shape:
