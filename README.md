@@ -114,6 +114,19 @@ See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 - `/docs/troubleshooting.md`
 - `/docs/migration-cli-first.md`
 - `/docs/transition-terminology.md`
+- `/examples/state-drift-demo/README.md`
+
+## Drift demo
+
+Run the transition demo in under 5 minutes:
+
+```bash
+python examples/state-drift-demo/demo.py
+```
+
+Expected:
+- `verify_before_ok=True`
+- `verify_after_ok=False`
 
 ### Beta mode config
 
