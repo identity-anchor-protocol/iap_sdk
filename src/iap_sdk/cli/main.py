@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -13,12 +14,20 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Sequence
+from uuid import uuid4
 
 from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
 from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
 from iap_sdk.cli.sessions import SessionError, save_session_record
+from iap_sdk.cli.tracking import (
+    append_tracking_events,
+    build_file_record,
+    collect_tracked_files,
+    ensure_tracking_config,
+    load_track_config,
+)
 from iap_sdk.client import RegistryClient
 from iap_sdk.errors import RegistryUnavailableError, SDKTimeoutError
 from iap_sdk.manifest import build_identity_manifest
@@ -62,7 +71,7 @@ def _sdk_version() -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="iap-agent")
+    parser = argparse.ArgumentParser(prog="iap")
     parser.add_argument(
         "--version",
         action="version",
@@ -96,6 +105,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include private_key_b64 in output (sensitive; avoid in shared logs)",
     )
     init.add_argument("--json", action="store_true", help="Print identity details as JSON")
+
+    track = sub.add_parser("track", help="Canonicalize tracked files and append AMCS state events")
+    track.add_argument("--config-file", default="iap.yaml", help="Tracking config YAML path")
+    track.add_argument("--identity-file", default=None)
+    track.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    track.add_argument("--json", action="store_true")
+
+    commit = sub.add_parser("commit", help="Record a state mutation commit")
+    commit.add_argument("message", help="Commit message")
+    commit.add_argument("--config-file", default="iap.yaml", help="Tracking config YAML path")
+    commit.add_argument("--identity-file", default=None)
+    commit.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    commit.add_argument("--json", action="store_true")
     verify = sub.add_parser("verify", help="Verify certificate offline")
     verify.add_argument("certificate_json")
     verify.add_argument("--registry-public-key-b64", default=None)
@@ -119,9 +141,73 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     amcs_root.add_argument("--json", action="store_true", help="Print AMCS root details as JSON")
 
-    anchor = sub.add_parser("anchor", help="Identity-anchor operations")
-    anchor_sub = anchor.add_subparsers(dest="anchor_command", required=True)
+    anchor = sub.add_parser("anchor", help="Create a state anchor (or legacy identity-anchor ops)")
+    anchor.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    anchor.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    anchor.add_argument("--agent-name", default="Local Agent")
+    anchor.add_argument("--agent-custody-class", default=None)
+    anchor.add_argument("--memory-root", default=None)
+    anchor.add_argument("--sequence", type=int, default=None)
+    anchor.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    anchor.add_argument(
+        "--payment-provider",
+        choices=("auto", "stripe", "lightning-btc", "lnbits"),
+        default="auto",
+        help="Choose payment handoff provider (lnbits is legacy alias for lightning-btc)",
+    )
+    anchor.add_argument("--success-url", default=None)
+    anchor.add_argument("--cancel-url", default=None)
+    anchor.add_argument("--open-browser", action="store_true")
+    anchor.add_argument("--json", action="store_true")
+    anchor.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Create local signed state_root only, do not submit to registry",
+    )
+    anchor_sub = anchor.add_subparsers(dest="anchor_command", required=False)
+    anchor_sub.add_parser("state", help="Create state anchor (default behavior)")
     anchor_issue = anchor_sub.add_parser("issue", help="Issue identity anchor certificate")
+    anchor_identity = anchor_sub.add_parser("identity", help="Alias for `anchor issue`")
+    anchor_identity.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    anchor_identity.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    anchor_identity.add_argument(
+        "--agent-name",
+        default="Local Agent",
+        help="Optional agent display name metadata",
+    )
+    anchor_identity.add_argument(
+        "--payment-provider",
+        choices=("auto", "stripe", "lightning-btc", "lnbits"),
+        default="auto",
+        help="Choose payment handoff provider (lnbits is legacy alias for lightning-btc)",
+    )
+    anchor_identity.add_argument("--success-url", default=None)
+    anchor_identity.add_argument("--cancel-url", default=None)
+    anchor_identity.add_argument("--open-browser", action="store_true")
+    anchor_identity.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait until request is CERTIFIED",
+    )
+    anchor_identity.add_argument("--timeout-seconds", type=int, default=300)
+    anchor_identity.add_argument("--poll-seconds", type=int, default=5)
+    anchor_identity.add_argument("--json", action="store_true", help="Print response as JSON")
     anchor_issue.add_argument(
         "--registry-base",
         default=None,
@@ -335,7 +421,38 @@ def _run_init(*, args, stdout, stderr) -> int:
     if args.export_private_key:
         payload["private_key_b64"] = identity.private_key_b64
 
+    project_root = Path.cwd()
+    state_dir = project_root / ".iap" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    secret_path = state_dir / "agent_secret"
+    if not secret_path.exists():
+        secret_path.write_text(uuid4().hex, encoding="utf-8")
+        if os.name == "posix":
+            secret_path.chmod(0o600)
+
+    state_root_path = state_dir / "state_root.json"
+    if not state_root_path.exists():
+        state_root_payload = {
+            "agent_id": identity.agent_id,
+            "sequence": 0,
+            "memory_root": None,
+            "status": "initialized",
+            "updated_at": _utc_now_iso(),
+        }
+        state_root_path.write_text(
+            json.dumps(state_root_payload, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    tracking_config_path = project_root / "iap.yaml"
+    created_tracking_config = ensure_tracking_config(tracking_config_path)
+
     if args.json:
+        payload["agent_secret_path"] = str(secret_path)
+        payload["state_dir"] = str(state_dir)
+        payload["state_root_file"] = str(state_root_path)
+        payload["tracking_config_file"] = str(tracking_config_path)
+        payload["tracking_config_created"] = created_tracking_config
         print(json.dumps(payload, sort_keys=True), file=stdout)
         return EXIT_SUCCESS
 
@@ -343,8 +460,116 @@ def _run_init(*, args, stdout, stderr) -> int:
     print(f"created: {str(payload['created']).lower()}", file=stdout)
     print(f"agent_id: {payload['agent_id']}", file=stdout)
     print(f"public_key_b64: {payload['public_key_b64']}", file=stdout)
+    print(f"state_dir: {state_dir}", file=stdout)
+    print(f"state_root_file: {state_root_path}", file=stdout)
+    print(f"tracking_config_file: {tracking_config_path}", file=stdout)
     if args.export_private_key:
         print("private_key_b64: [hidden in non-json output]", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_track(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity, _ = load_identity(args.identity_file)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    config_path = Path(args.config_file)
+    try:
+        track_config = load_track_config(config_path)
+    except AMCSError as exc:
+        return _print_error(stderr, "track error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    project_root = Path.cwd()
+    files = collect_tracked_files(project_root=project_root, config=track_config)
+    records = [
+        build_file_record(project_root=project_root, file_path=file_path)
+        for file_path in files
+    ]
+
+    amcs_db_path = args.amcs_db or config.amcs_db_path
+    try:
+        result = append_tracking_events(
+            amcs_db_path=amcs_db_path,
+            agent_id=identity.agent_id,
+            file_records=records,
+        )
+    except AMCSError as exc:
+        return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    if args.json:
+        print(json.dumps(result, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"agent_id: {result['agent_id']}", file=stdout)
+    print(f"tracked_file_count: {result['tracked_file_count']}", file=stdout)
+    print(f"sequence_end: {result['sequence_end']}", file=stdout)
+    print(f"memory_root: {result['memory_root']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_commit(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity, _ = load_identity(args.identity_file)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    config_path = Path(args.config_file)
+    try:
+        track_config = load_track_config(config_path)
+    except AMCSError as exc:
+        return _print_error(stderr, "track error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    project_root = Path.cwd()
+    files = collect_tracked_files(project_root=project_root, config=track_config)
+    records = [
+        build_file_record(project_root=project_root, file_path=file_path)
+        for file_path in files
+    ]
+    amcs_db_path = args.amcs_db or config.amcs_db_path
+    try:
+        result = append_tracking_events(
+            amcs_db_path=amcs_db_path,
+            agent_id=identity.agent_id,
+            file_records=records,
+        )
+    except AMCSError as exc:
+        return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    # Record explicit mutation intent as a dedicated commit event.
+    try:
+        from amcs import AMCSClient, SQLiteEventStore
+    except Exception as exc:  # pragma: no cover
+        return _print_error(
+            stderr,
+            "amcs error",
+            f"AMCS unavailable for commit event append: {exc}",
+            code=EXIT_VALIDATION_ERROR,
+        )
+    store = SQLiteEventStore(amcs_db_path)
+    client = AMCSClient(store=store, agent_id=identity.agent_id)
+    commit_result = client.append(
+        "state.commit",
+        {"message": args.message, "tracked_file_count": result["tracked_file_count"]},
+    )
+    memory_root = client.get_memory_root()
+
+    output = {
+        "agent_id": identity.agent_id,
+        "message": args.message,
+        "tracked_file_count": result["tracked_file_count"],
+        "sequence": commit_result.sequence,
+        "event_hash": commit_result.event_hash,
+        "memory_root": memory_root,
+    }
+
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+    print(f"agent_id: {output['agent_id']}", file=stdout)
+    print(f"message: {output['message']}", file=stdout)
+    print(f"sequence: {output['sequence']}", file=stdout)
+    print(f"memory_root: {output['memory_root']}", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -465,6 +690,81 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
     print(f"request_id: {request_id}", file=stdout)
     print(f"status: {final_status}", file=stdout)
     print(f"payment_method: {payment['payment_method']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_anchor_state(*, args, config: CLIConfig, stdout, stderr) -> int:
+    if args.local_only:
+        try:
+            identity, _ = load_identity(args.identity_file)
+        except IdentityError as exc:
+            return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+        memory_root = args.memory_root
+        sequence = args.sequence
+        if memory_root is None or sequence is None:
+            amcs_db_path = args.amcs_db or config.amcs_db_path
+            try:
+                amcs = get_amcs_root(amcs_db_path=amcs_db_path, agent_id=identity.agent_id)
+            except AMCSError as exc:
+                return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
+            if memory_root is None:
+                memory_root = amcs.memory_root
+            if sequence is None:
+                sequence = amcs.sequence
+
+        local_anchor_id = f"local:{identity.agent_id}:{sequence}"
+        payload = {
+            "anchor_id": local_anchor_id,
+            "agent_id": identity.agent_id,
+            "memory_root": memory_root,
+            "sequence": sequence,
+            "registry_submitted": False,
+        }
+        if args.json:
+            print(json.dumps(payload, sort_keys=True), file=stdout)
+            return EXIT_SUCCESS
+        print(f"anchor_id: {payload['anchor_id']}", file=stdout)
+        print(f"agent_id: {payload['agent_id']}", file=stdout)
+        print(f"sequence: {payload['sequence']}", file=stdout)
+        print(f"memory_root: {payload['memory_root']}", file=stdout)
+        print("registry_submitted: false", file=stdout)
+        return EXIT_SUCCESS
+
+    continuity_args = argparse.Namespace(
+        registry_base=args.registry_base,
+        identity_file=args.identity_file,
+        agent_name=args.agent_name,
+        agent_custody_class=args.agent_custody_class,
+        memory_root=args.memory_root,
+        sequence=args.sequence,
+        amcs_db=args.amcs_db,
+        sessions_dir=None,
+        json=True,
+    )
+    from io import StringIO
+    buf = StringIO()
+    rc = _run_continuity_request(args=continuity_args, config=config, stdout=buf, stderr=stderr)
+    if rc != EXIT_SUCCESS:
+        return rc
+    payload = json.loads(buf.getvalue())
+    output = {
+        "anchor_id": payload["request_id"],
+        "agent_id": payload["agent_id"],
+        "memory_root": payload["memory_root"],
+        "sequence": payload["sequence"],
+        "registry_submitted": True,
+        "status": payload.get("status"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+    else:
+        print(f"anchor_id: {output['anchor_id']}", file=stdout)
+        print(f"agent_id: {output['agent_id']}", file=stdout)
+        print(f"sequence: {output['sequence']}", file=stdout)
+        print(f"memory_root: {output['memory_root']}", file=stdout)
+        print(f"status: {output['status']}", file=stdout)
+        print("registry_submitted: true", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -1030,6 +1330,12 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "init":
         return _run_init(args=args, stdout=stdout, stderr=stderr)
 
+    if args.command == "track":
+        return _run_track(args=args, config=config, stdout=stdout, stderr=stderr)
+
+    if args.command == "commit":
+        return _run_commit(args=args, config=config, stdout=stdout, stderr=stderr)
+
     if args.command == "verify":
         return _run_verify(args=args, config=config, stdout=stdout, stderr=stderr)
 
@@ -1039,7 +1345,11 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         return _coming_soon(path=f"amcs {args.amcs_command}", stdout=stdout)
 
     if args.command == "anchor":
+        if args.anchor_command is None or args.anchor_command == "state":
+            return _run_anchor_state(args=args, config=config, stdout=stdout, stderr=stderr)
         if args.anchor_command == "issue":
+            return _run_anchor_issue(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.anchor_command == "identity":
             return _run_anchor_issue(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"anchor {args.anchor_command}", stdout=stdout)
 
