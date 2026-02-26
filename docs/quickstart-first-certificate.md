@@ -1,4 +1,4 @@
-# Quickstart: First Certificate in 10 Minutes
+# Quickstart: First Continuity Record in 10 Minutes
 
 Run from your `iap-sdk` environment.
 
@@ -29,18 +29,18 @@ iap-agent anchor issue --registry-base https://registry.ia-protocol.com --agent-
 iap-agent continuity request --registry-base https://registry.ia-protocol.com --json
 ```
 
-## 5) Payment + certification + certificate
+## 5) Payment + certification + continuity record
 
 ```bash
 iap-agent continuity pay --request-id <request-id>
 iap-agent continuity wait --request-id <request-id>
-iap-agent continuity cert --request-id <request-id> --json
+iap-agent continuity cert --request-id <request-id> --output-file ./continuity_record.json --json
 ```
 
 ## 6) Offline verify certificate
 
 ```bash
-iap-agent verify ./certificate.json --registry-base https://registry.ia-protocol.com
+iap-agent verify ./continuity_record.json --registry-base https://registry.ia-protocol.com
 ```
 
 ## One-command path

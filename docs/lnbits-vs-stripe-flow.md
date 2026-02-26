@@ -1,4 +1,4 @@
-# LNBits vs Stripe Payment Flow
+# Lightning/OpenNode vs Stripe Payment Flow
 
 `iap-agent` supports both payment paths through the same continuity workflow.
 
@@ -15,11 +15,11 @@ Command:
 iap-agent continuity pay --request-id <request-id> --open-browser
 ```
 
-## LNBits path (fallback)
+## Lightning/OpenNode path (fallback)
 
 1. If Stripe session endpoint is unavailable, CLI fetches continuity status.
-2. Status includes LN invoice details (`lightning_invoice`, `lnbits_payment_hash`).
-3. User pays invoice in LNBits-compatible wallet.
+2. Status includes Lightning invoice details (`lightning_invoice` and provider reference).
+3. User pays invoice in any Lightning-compatible wallet.
 4. Registry updates request to `CERTIFIED`.
 
 Same command:
