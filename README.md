@@ -83,9 +83,9 @@ python -m pip install -e ".[dev]"
 iap version
 iap init
 iap track
-iap anchor --local-only
+iap anchor
 iap commit "updated agent objective"
-iap verify ./certificate.json --registry-public-key-b64 <key>
+iap verify ./continuity_record.json --registry-public-key-b64 <key>
 
 # Legacy CLI remains supported in v0.1.x:
 iap-agent continuity request --registry-base https://registry.ia-protocol.com --json

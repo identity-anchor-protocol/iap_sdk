@@ -118,7 +118,7 @@ def _build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--identity-file", default=None)
     commit.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
     commit.add_argument("--json", action="store_true")
-    verify = sub.add_parser("verify", help="Verify certificate offline")
+    verify = sub.add_parser("verify", help="Verify continuity record offline")
     verify.add_argument("certificate_json")
     verify.add_argument("--registry-public-key-b64", default=None)
     verify.add_argument("--registry-base", default=None)
@@ -1086,7 +1086,14 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
     if args.json:
         print(json.dumps({"ok": ok, "reason": reason}, sort_keys=True), file=stdout)
     else:
-        print(reason, file=stdout)
+        if ok:
+            print("Continuity verified ✓", file=stdout)
+            print("No fork detected.", file=stdout)
+            print("State root matches registry anchor.", file=stdout)
+            if reason and reason != "ok":
+                print(f"detail: {reason}", file=stdout)
+        else:
+            print(reason, file=stdout)
     return EXIT_SUCCESS if ok else EXIT_VERIFICATION_FAILED
 
 
