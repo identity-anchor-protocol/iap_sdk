@@ -81,6 +81,30 @@ def test_verify_failure_returns_exit_4(monkeypatch, tmp_path) -> None:
     assert "invalid registry signature" in out.getvalue()
 
 
+def test_verify_human_output_includes_transition_summary(monkeypatch, tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    cert_path = tmp_path / "continuity_record.json"
+    cert_path.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.verify_certificate_file",
+        lambda *args, **kwargs: (True, "ok"),
+    )
+
+    rc = main(
+        ["verify", str(cert_path), "--registry-public-key-b64", "PUB"],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    output = out.getvalue()
+    assert "Continuity verified" in output
+    assert "No fork detected." in output
+    assert "State root matches registry anchor." in output
+
+
 def test_verify_invalid_witness_bundle_returns_error(monkeypatch, tmp_path) -> None:
     out = io.StringIO()
     err = io.StringIO()
