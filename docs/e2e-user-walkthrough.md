@@ -11,6 +11,10 @@ What you do:
 5. Request and pay for Continuity.
 6. Download and verify the continuity record offline.
 
+Important:
+- Do not type placeholders like `<agent_id>` or `<request_id>` literally.
+- In this guide, values are captured into shell variables so you can copy/paste safely.
+
 ## 0) Fresh setup
 
 ```bash
@@ -26,13 +30,24 @@ Set registry URL:
 export REGISTRY_BASE="https://registry.ia-protocol.com"
 ```
 
+Optional: set your default agent display name once in config (used when `--agent-name` is omitted):
+
+```bash
+mkdir -p ~/.iap_agent
+cat > ~/.iap_agent/config.toml <<'EOF'
+[cli]
+agent_name = "Atlas"
+EOF
+```
+
 ## 1) Create your local agent identity
 
 ```bash
-iap-agent init --show-public --json
+INIT_JSON="$(iap-agent init --show-public --json)"
+echo "$INIT_JSON"
+AGENT_ID="$(echo "$INIT_JSON" | jq -r .agent_id)"
+echo "AGENT_ID=$AGENT_ID"
 ```
-
-Keep the returned `agent_id` for next steps.
 
 ## 2) Create agent files and store them in AMCS
 
@@ -51,23 +66,23 @@ EOF
 ```
 
 Append both files into local AMCS database:
-*** Replace placeholder <agent_id> with your saved agent_id
 
 ```bash
 iap-agent amcs append \
   --amcs-db ./amcs.db \
-  --agent-id <agent_id> \
+  --agent-id "$AGENT_ID" \
   --file ./AGENT.md \
   --file ./SOUL.md \
   --json
 ```
 
 The command prints the latest memory root.
+If `./amcs.db` does not exist yet, AMCS creates it automatically.
 
 ## 3) Confirm AMCS root and sequence
 
 ```bash
-iap-agent amcs root --amcs-db ./amcs.db --agent-id <agent_id> --json
+iap-agent amcs root --amcs-db ./amcs.db --agent-id "$AGENT_ID" --json
 ```
 
 ## 4) Request Identity Anchor and pay for issuance
@@ -82,13 +97,22 @@ Payment provider options:
 Example with auto handoff (Stripe first, Lightning fallback):
 
 ```bash
-iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --json
+ANCHOR_JSON="$(iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider auto --open-browser --json)"
+echo "$ANCHOR_JSON"
+ANCHOR_REQUEST_ID="$(echo "$ANCHOR_JSON" | jq -r .request_id)"
+ANCHOR_STATUS="$(echo "$ANCHOR_JSON" | jq -r .status)"
+echo "ANCHOR_REQUEST_ID=$ANCHOR_REQUEST_ID"
+echo "ANCHOR_STATUS=$ANCHOR_STATUS"
 ```
-
-Save `request_id` from output.
 
 If Stripe checkout is returned, a browser payment page opens.
 If Lightning fallback is returned, pay the `payment.lightning_invoice`.
+
+Fetch and save identity-anchor certificate bundle (recommended):
+
+```bash
+iap-agent anchor cert --registry-base "$REGISTRY_BASE" --request-id "$ANCHOR_REQUEST_ID" --output-file ./identity_anchor_record.json --json
+```
 
 Optional: wait directly from the same command:
 
@@ -101,13 +125,19 @@ iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --p
 Create request:
 
 ```bash
-iap-agent continuity request --registry-base "$REGISTRY_BASE" --amcs-db ./amcs.db --json
+CONT_JSON="$(iap-agent continuity request --registry-base "$REGISTRY_BASE" --amcs-db ./amcs.db --json)"
+echo "$CONT_JSON"
+CONT_REQUEST_ID="$(echo "$CONT_JSON" | jq -r .request_id)"
+CONT_STATUS="$(echo "$CONT_JSON" | jq -r .status)"
+echo "CONT_REQUEST_ID=$CONT_REQUEST_ID"
+echo "CONT_STATUS=$CONT_STATUS"
 ```
 
-Copy the `request_id`, then request payment handoff:
+If `CONT_STATUS` is already `CERTIFIED`, skip directly to step 6.
+Otherwise request payment handoff:
 
 ```bash
-iap-agent continuity pay --registry-base "$REGISTRY_BASE" --request-id <request_id> --payment-provider auto --open-browser --json
+iap-agent continuity pay --registry-base "$REGISTRY_BASE" --request-id "$CONT_REQUEST_ID" --payment-provider auto --open-browser --json
 ```
 
 If Stripe is used, complete checkout in browser.
@@ -141,11 +171,16 @@ Why AMCS-backed mode is better:
 ## 6) Wait for certification, fetch continuity record, verify
 
 ```bash
-iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <request_id> --timeout-seconds 600 --poll-seconds 5 --json
-iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request_id> --output-file ./continuity_record.json --json
+iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id "$CONT_REQUEST_ID" --timeout-seconds 600 --poll-seconds 5 --json
+iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id "$CONT_REQUEST_ID" --output-file ./continuity_record.json --json
 REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
-iap-agent verify ./continuity_record.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
+iap-agent verify ./continuity_record.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --identity-anchor ./identity_anchor_record.json --json
 ```
+
+Why this registry public key step matters:
+- It pins the registry trust anchor locally.
+- With the pinned key, signature checks are done offline against certificate data.
+- You can validate authenticity independently, even if the registry is unavailable later.
 
 Expected verify output shape:
 

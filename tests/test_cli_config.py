@@ -24,3 +24,11 @@ def test_file_registry_base_used_when_env_not_set(tmp_path, monkeypatch) -> None
     monkeypatch.delenv("IAP_REGISTRY_BASE", raising=False)
     config = load_cli_config(config_path)
     assert config.registry_base == "http://localhost:8080"
+
+
+def test_file_agent_name_used_when_set(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('agent_name = "Config Agent"\n', encoding="utf-8")
+    monkeypatch.delenv("IAP_REGISTRY_BASE", raising=False)
+    config = load_cli_config(config_path)
+    assert config.agent_name == "Config Agent"

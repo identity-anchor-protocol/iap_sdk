@@ -7,6 +7,10 @@ This version is explicit about:
 - where files are stored
 - how to complete payment in Stripe or Lightning/OpenNode mode
 
+Important:
+- Do not type placeholders like `<anchor_request_id>` literally.
+- This guide captures key values into shell variables to avoid manual copy mistakes.
+
 Assumed folders:
 
 - `IAP-Registry` repo: `/Users/Dirk/code/IAP/IAP-Registry`
@@ -57,10 +61,11 @@ export REGISTRY_BASE="http://localhost:8080"
 ## Step 1: Create agent key pair
 
 ```bash
-iap-agent init --show-public --json
+INIT_JSON="$(iap-agent init --show-public --json)"
+echo "$INIT_JSON"
+AGENT_ID="$(echo "$INIT_JSON" | jq -r .agent_id)"
+echo "AGENT_ID=$AGENT_ID"
 ```
-
-Copy `agent_id` from output.
 
 ## Step 2: Create and store identity files in AMCS
 
@@ -81,75 +86,75 @@ EOF
 Append into `./amcs.db`:
 
 ```bash
-iap-agent amcs append --amcs-db ./amcs.db --agent-id <agent_id> --file ./AGENT.md --file ./SOUL.md --json
+iap-agent amcs append --amcs-db ./amcs.db --agent-id "$AGENT_ID" --file ./AGENT.md --file ./SOUL.md --json
 ```
+
+If `./amcs.db` does not exist yet, AMCS creates it automatically.
 
 Confirm root + sequence:
 
 ```bash
-iap-agent amcs root --amcs-db ./amcs.db --agent-id <agent_id> --json
+iap-agent amcs root --amcs-db ./amcs.db --agent-id "$AGENT_ID" --json
 ```
 
 ## Step 3: Identity Anchor request + payment
 
-Lightning local-dev path:
+Capture output and extract values:
 
 ```bash
-iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider lightning-btc --json
+ANCHOR_JSON="$(iap-agent anchor issue --registry-base "$REGISTRY_BASE" --agent-name "Atlas" --payment-provider lightning-btc --json)"
+echo "$ANCHOR_JSON"
+ANCHOR_REQUEST_ID="$(echo "$ANCHOR_JSON" | jq -r .request_id)"
+echo "ANCHOR_REQUEST_ID=$ANCHOR_REQUEST_ID"
 ```
 
-From the JSON output, copy:
-
-- `request_id`
-- `payment.lnbits_payment_hash` (legacy field name; backend may be OpenNode)
-- `payment.lightning_invoice`
-
-Pay invoice in your Lightning wallet.
+Pay invoice in your Lightning wallet if a payable invoice is returned.
 
 Check anchor status:
 
 ```bash
-curl -s "http://localhost:8080/v1/certificates/identity-anchor/requests/<anchor_request_id>"
+curl -s "http://localhost:8080/v1/certificates/identity-anchor/requests/$ANCHOR_REQUEST_ID"
 ```
 
 When status is `CERTIFIED`, fetch anchor certificate:
 
 ```bash
-curl -s "http://localhost:8080/v1/certificates/identity-anchor/certificates/<anchor_request_id>" > identity_anchor_certificate.json
+iap-agent anchor cert --registry-base "$REGISTRY_BASE" --request-id "$ANCHOR_REQUEST_ID" --output-file ./identity_anchor_certificate.json --json
 ```
 
 ## Step 4: Continuity request + payment
 
 ```bash
-iap-agent continuity request --registry-base "$REGISTRY_BASE" --amcs-db ./amcs.db --json
+CONT_JSON="$(iap-agent continuity request --registry-base "$REGISTRY_BASE" --amcs-db ./amcs.db --json)"
+echo "$CONT_JSON"
+CONT_REQUEST_ID="$(echo "$CONT_JSON" | jq -r .request_id)"
+CONT_STATUS="$(echo "$CONT_JSON" | jq -r .status)"
+echo "CONT_REQUEST_ID=$CONT_REQUEST_ID"
+echo "CONT_STATUS=$CONT_STATUS"
 ```
 
-From the JSON output, copy:
-
-- `request_id`
-- `payment.lnbits_payment_hash` (legacy field name; backend may be OpenNode)
-- `payment.lightning_invoice`
-
-Pay invoice in your Lightning wallet.
+Pay invoice in your Lightning wallet if continuity is not yet `CERTIFIED`.
 
 Wait for certification:
 
 ```bash
-iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <continuity_request_id> --timeout-seconds 600 --poll-seconds 5 --json
+iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id "$CONT_REQUEST_ID" --timeout-seconds 600 --poll-seconds 5 --json
 ```
 
 Fetch certificate bundle:
 
 ```bash
-iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <continuity_request_id> --output-file ./continuity_record.json --json
+iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id "$CONT_REQUEST_ID" --output-file ./continuity_record.json --json
 ```
 
 Verify:
 
 ```bash
 REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
-iap-agent verify ./continuity_record.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
+iap-agent verify ./continuity_record.json --profile strict --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --identity-anchor ./identity_anchor_certificate.json --json
 ```
+
+The pinned `REGISTRY_PUBLIC_KEY_B64` is your local trust anchor for offline signature checks.
 
 Expected: `{"ok": true, "reason": "ok"}`.
 
