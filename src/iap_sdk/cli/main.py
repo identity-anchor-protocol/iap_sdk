@@ -17,7 +17,7 @@ from typing import Sequence
 from uuid import uuid4
 
 from iap_sdk.certificates import PROTOCOL_VERSION
-from iap_sdk.cli.amcs import AMCSError, get_amcs_root
+from iap_sdk.cli.amcs import AMCSError, append_files_to_amcs, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
 from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
 from iap_sdk.cli.sessions import SessionError, save_session_record
@@ -140,6 +140,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to local identity file when deriving agent_id fallback",
     )
     amcs_root.add_argument("--json", action="store_true", help="Print AMCS root details as JSON")
+    amcs_append = amcs_sub.add_parser("append", help="Append local files into AMCS as state events")
+    amcs_append.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    amcs_append.add_argument("--agent-id", default=None, help="Agent id for AMCS append")
+    amcs_append.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file when deriving agent_id fallback",
+    )
+    amcs_append.add_argument(
+        "--file",
+        dest="files",
+        action="append",
+        default=[],
+        help="File path to append (repeat flag for multiple files)",
+    )
+    # Legacy aliases used by earlier walkthrough/scripts.
+    amcs_append.add_argument("--agent-file", default=None, help="Alias for --file")
+    amcs_append.add_argument("--soul-file", default=None, help="Alias for --file")
+    amcs_append.add_argument("--json", action="store_true", help="Print append details as JSON")
 
     anchor = sub.add_parser("anchor", help="Create a state anchor (or legacy identity-anchor ops)")
     anchor.add_argument(
@@ -604,6 +623,65 @@ def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     print(f"amcs_db_path: {payload['amcs_db_path']}", file=stdout)
     print(f"sequence: {payload['sequence']}", file=stdout)
     print(f"memory_root: {payload['memory_root']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_amcs_append(*, args, config: CLIConfig, stdout, stderr) -> int:
+    amcs_db_path = args.amcs_db or config.amcs_db_path
+
+    agent_id = args.agent_id
+    if not agent_id:
+        try:
+            identity, _ = load_identity(args.identity_file)
+            agent_id = identity.agent_id
+        except IdentityError as exc:
+            return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    file_paths = list(args.files or [])
+    if args.agent_file:
+        file_paths.append(args.agent_file)
+    if args.soul_file:
+        file_paths.append(args.soul_file)
+    if not file_paths:
+        return _print_error(
+            stderr,
+            "amcs error",
+            "no files provided; use --file (or --agent-file/--soul-file)",
+            code=EXIT_VALIDATION_ERROR,
+        )
+
+    try:
+        result = append_files_to_amcs(
+            amcs_db_path=amcs_db_path,
+            agent_id=agent_id,
+            file_paths=file_paths,
+        )
+    except AMCSError as exc:
+        return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = {
+        "agent_id": result.agent_id,
+        "amcs_db_path": result.amcs_db_path,
+        "sequence": result.sequence,
+        "memory_root": result.memory_root,
+        "items": [
+            {"path": item.path, "sequence": item.sequence, "event_hash": item.event_hash}
+            for item in result.items
+        ],
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"amcs_db_path: {payload['amcs_db_path']}", file=stdout)
+    print(f"sequence: {payload['sequence']}", file=stdout)
+    print(f"memory_root: {payload['memory_root']}", file=stdout)
+    for item in payload["items"]:
+        print(
+            f"appended: path={item['path']} sequence={item['sequence']} hash={item['event_hash']}",
+            file=stdout,
+        )
     return EXIT_SUCCESS
 
 
@@ -1349,6 +1427,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "amcs":
         if args.amcs_command == "root":
             return _run_amcs_root(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.amcs_command == "append":
+            return _run_amcs_append(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"amcs {args.amcs_command}", stdout=stdout)
 
     if args.command == "anchor":

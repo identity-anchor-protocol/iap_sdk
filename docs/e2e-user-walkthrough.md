@@ -18,7 +18,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install iap-agent
-python -m pip install -e /path/to/AMCS-0.1
 ```
 
 Set registry URL:
@@ -52,13 +51,15 @@ EOF
 ```
 
 Append both files into local AMCS database:
+*** Replace placeholder <agent_id> with your saved agent_id
 
 ```bash
-python scripts/append_agent_files_to_amcs.py \
+iap-agent amcs append \
   --amcs-db ./amcs.db \
   --agent-id <agent_id> \
-  --agent-file ./AGENT.md \
-  --soul-file ./SOUL.md
+  --file ./AGENT.md \
+  --file ./SOUL.md \
+  --json
 ```
 
 The command prints the latest memory root.

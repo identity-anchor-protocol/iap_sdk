@@ -46,7 +46,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
-python -m pip install -e /Users/Dirk/code/IAP/AMCS-0.1
 ```
 
 Set local registry target:
@@ -82,7 +81,7 @@ EOF
 Append into `./amcs.db`:
 
 ```bash
-python scripts/append_agent_files_to_amcs.py --amcs-db ./amcs.db --agent-id <agent_id> --agent-file ./AGENT.md --soul-file ./SOUL.md
+iap-agent amcs append --amcs-db ./amcs.db --agent-id <agent_id> --file ./AGENT.md --file ./SOUL.md --json
 ```
 
 Confirm root + sequence:
