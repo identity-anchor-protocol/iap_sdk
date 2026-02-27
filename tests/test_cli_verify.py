@@ -38,8 +38,9 @@ def test_verify_fetches_registry_public_key(monkeypatch, tmp_path) -> None:
     cert_path.write_text("{}\n", encoding="utf-8")
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_public_registry_key(self) -> dict:
             return {"public_key_b64": "FETCHED"}

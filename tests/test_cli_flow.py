@@ -47,8 +47,9 @@ def test_flow_run_end_to_end(monkeypatch, tmp_path) -> None:
     )
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
             self.calls = 0
 
         def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
@@ -159,8 +160,9 @@ def test_flow_run_verification_failure(monkeypatch, tmp_path) -> None:
     )
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
             return {"request_id": "req-anchor", "status": "WAITING_PAYMENT"}

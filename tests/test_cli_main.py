@@ -162,8 +162,9 @@ def test_registry_status_uses_identity_fallback_and_prints_json(tmp_path, monkey
     )
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_agent_registry_status(self, agent_id: str) -> dict:
             return {
@@ -205,8 +206,9 @@ def test_registry_status_accepts_explicit_agent_id(tmp_path, monkeypatch) -> Non
     config_path.write_text("beta_mode = false\n", encoding="utf-8")
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_agent_registry_status(self, agent_id: str) -> dict:
             return {
@@ -242,3 +244,53 @@ def test_registry_status_accepts_explicit_agent_id(tmp_path, monkeypatch) -> Non
     assert "agent_id: ed25519:test-agent" in out.getvalue()
     assert "has_identity_anchor: False" in out.getvalue()
     assert err.getvalue() == ""
+
+
+def test_registry_status_passes_configured_api_key(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        'beta_mode = false\nregistry_api_key = "iap_live_test"\n',
+        encoding="utf-8",
+    )
+    captured: dict[str, str | None] = {}
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            captured["base_url"] = base_url
+            captured["api_key"] = api_key
+
+        def get_agent_registry_status(self, agent_id: str) -> dict:
+            return {
+                "agent_id": agent_id,
+                "has_identity_anchor": False,
+                "identity_anchor_request_id": None,
+                "identity_anchor_issued_at": None,
+                "latest_continuity_sequence": None,
+                "latest_continuity_memory_root": None,
+                "latest_continuity_request_id": None,
+                "latest_continuity_issued_at": None,
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "registry",
+            "status",
+            "--agent-id",
+            "ed25519:test-agent",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    assert captured == {
+        "base_url": "https://registry.ia-protocol.com",
+        "api_key": "iap_live_test",
+    }

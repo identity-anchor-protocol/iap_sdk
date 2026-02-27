@@ -167,6 +167,7 @@ Example:
 beta_mode = true
 maturity_level = "beta"
 registry_base = "https://registry.ia-protocol.com"
+registry_api_key = "iap_live_optional"
 amcs_db_path = "./amcs.db"
 ```
 
@@ -174,6 +175,7 @@ Environment override:
 
 ```bash
 export IAP_REGISTRY_BASE="https://registry.ia-protocol.com"
+export IAP_REGISTRY_API_KEY="iap_live_optional"
 ```
 
 Local development override example:

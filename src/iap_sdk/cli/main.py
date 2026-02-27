@@ -653,7 +653,7 @@ def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
             return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         status = client.get_agent_registry_status(agent_id)
     except RegistryUnavailableError as exc:
@@ -797,7 +797,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     registry_base = args.registry_base or config.registry_base
     agent_name = _resolve_agent_name(args, config)
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     payload = sign_identity_anchor_request(
         build_identity_anchor_request(
             agent_public_key_b64=identity.public_key_b64,
@@ -878,7 +878,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_anchor_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         bundle = client.get_identity_anchor_certificate(args.request_id)
     except RegistryUnavailableError as exc:
@@ -1084,7 +1084,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     signed_payload = sign_continuity_request(payload, identity.private_key_bytes)
 
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         response = client.submit_continuity_request(signed_payload)
     except RegistryRequestError as exc:
@@ -1163,7 +1163,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
 
     try:
         output = _resolve_payment_handoff(
@@ -1199,7 +1199,7 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
     timeout_seconds = max(1, int(args.timeout_seconds))
     poll_seconds = max(1, int(args.poll_seconds))
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
 
     deadline = time.time() + timeout_seconds
     latest = None
@@ -1238,7 +1238,7 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         bundle = client.get_continuity_certificate(args.request_id)
     except RegistryUnavailableError as exc:
@@ -1280,7 +1280,7 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
                 code=EXIT_VALIDATION_ERROR,
             )
         registry_base = args.registry_base or config.registry_base
-        client = RegistryClient(base_url=registry_base)
+        client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
         try:
             key_payload = client.get_public_registry_key()
         except RegistryUnavailableError as exc:
@@ -1346,7 +1346,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
 
     _print_step(stdout, index=2, total=total_steps, title="ensuring identity anchor")
     try:

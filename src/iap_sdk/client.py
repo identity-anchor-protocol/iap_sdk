@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 
 from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
 
+REGISTRY_API_KEY_ENV_VAR = "IAP_REGISTRY_API_KEY"
+
 
 @dataclass
 class RegistryClient:
     base_url: str
+    api_key: str | None = None
     timeout: float = 10.0
     retries: int = 2
 
@@ -37,16 +41,21 @@ class RegistryClient:
         adapter = HTTPAdapter(max_retries=retry)
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
+        if self.api_key is None:
+            env_api_key = os.getenv(REGISTRY_API_KEY_ENV_VAR)
+            self.api_key = env_api_key.strip() or None if env_api_key else None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
 
     def _request(self, method: str, path: str, *, json_payload: dict | None = None) -> dict:
+        headers = {"x-iap-api-key": self.api_key} if self.api_key else None
         try:
             response = self._session.request(
                 method,
                 self._url(path),
                 json=json_payload,
+                headers=headers,
                 timeout=self.timeout,
             )
         except Exception as exc:  # pragma: no cover

@@ -25,8 +25,9 @@ def test_anchor_issue_success_json(monkeypatch) -> None:
     monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_identity_anchor(self, payload: dict) -> dict:
             assert payload["agent_id"] == "ed25519:test-agent"
@@ -73,8 +74,9 @@ def test_anchor_issue_handles_existing(monkeypatch) -> None:
     monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryUnavailableError("registry request failed: 409 already exists")
@@ -93,8 +95,9 @@ def test_anchor_issue_registry_failure(monkeypatch) -> None:
     monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryUnavailableError("registry request failed: 503 service unavailable")
@@ -129,8 +132,9 @@ def test_anchor_issue_uses_config_agent_name(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_identity_anchor(self, payload: dict) -> dict:
             assert payload["metadata"]["agent_name"] == "Configured Atlas"
@@ -155,8 +159,9 @@ def test_anchor_cert_writes_bundle(monkeypatch, tmp_path) -> None:
     output_file = tmp_path / "identity_anchor_record.json"
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_identity_anchor_certificate(self, request_id: str) -> dict:
             assert request_id == "anchor-req-1"

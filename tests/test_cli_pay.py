@@ -12,8 +12,9 @@ def test_continuity_pay_prefers_stripe(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def create_stripe_checkout_session(
             self,
@@ -48,8 +49,9 @@ def test_continuity_pay_falls_back_to_lightning_btc(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def create_stripe_checkout_session(
             self,
@@ -83,8 +85,9 @@ def test_continuity_pay_accepts_legacy_lnbits_alias(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_continuity_status(self, request_id: str) -> dict:
             assert request_id == "req-legacy"
@@ -119,8 +122,9 @@ def test_continuity_pay_returns_error_when_registry_unavailable(monkeypatch) -> 
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def create_stripe_checkout_session(
             self,

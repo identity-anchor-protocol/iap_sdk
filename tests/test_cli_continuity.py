@@ -45,8 +45,9 @@ def test_continuity_request_from_amcs_writes_session(monkeypatch, tmp_path) -> N
     )
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["agent_id"] == identity.agent_id
@@ -105,8 +106,9 @@ def test_continuity_request_explicit_root_sequence_skips_amcs(monkeypatch, tmp_p
     monkeypatch.setattr("iap_sdk.cli.main.get_amcs_root", fail_amcs)
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["memory_root"] == "a" * 64
@@ -161,8 +163,9 @@ def test_continuity_request_sequence_conflict_shows_actionable_hint(monkeypatch,
     )
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryRequestError(
