@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from iap_sdk.errors import RegistryUnavailableError, SDKTimeoutError
+from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
 
 
 @dataclass
@@ -53,8 +53,27 @@ class RegistryClient:
             raise RegistryUnavailableError(str(exc)) from exc
 
         if response.status_code >= 400:
-            raise RegistryUnavailableError(
-                f"registry request failed: {response.status_code} {response.text}"
+            body: object | None = None
+            detail: object | None = None
+            error_code: str | None = None
+            try:
+                body = response.json()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                detail = body.get("detail")
+                raw_error_code = body.get("error_code")
+                error_code = str(raw_error_code) if isinstance(raw_error_code, str) else None
+            if isinstance(detail, str):
+                message = f"registry request failed: {response.status_code} {detail}"
+            else:
+                message = f"registry request failed: {response.status_code} {response.text}"
+            raise RegistryRequestError(
+                message,
+                status_code=response.status_code,
+                detail=detail,
+                error_code=error_code,
+                body=body,
             )
         return response.json()
 
@@ -108,6 +127,9 @@ class RegistryClient:
 
     def get_public_registry_key(self) -> dict:
         return self._request("GET", "/registry/public-key")
+
+    def get_agent_registry_status(self, agent_id: str) -> dict:
+        return self._request("GET", f"/v1/registry/agents/{agent_id}/status")
 
     def wait_for_certification(
         self,
