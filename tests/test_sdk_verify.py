@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -9,7 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from iap_sdk.certificates import CONTINUITY_TYPE, IDENTITY_TYPE, KEY_ROTATION_TYPE, PROTOCOL_VERSION
 from iap_sdk.crypto.agent_identity import derive_agent_id
 from iap_sdk.offline_verify import canonical_certificate_payload_bytes
-from iap_sdk.verify import verify_certificate
+from iap_sdk.verify import verify_certificate, verify_certificate_file
 
 
 def _sign(private: Ed25519PrivateKey, cert: dict) -> dict:
@@ -273,3 +274,39 @@ def test_strict_witness_policy_enforced() -> None:
     )
     assert strict_ok_2 is True
     assert strict_reason_2 == "ok"
+
+
+def test_verify_certificate_file_accepts_bundle_payload(tmp_path: Path) -> None:
+    registry_public_b64, anchor, continuity_1, _, _, _ = _certs()
+
+    cert_bundle_path = tmp_path / "continuity_record.json"
+    cert_bundle_path.write_text(
+        json.dumps(
+            {
+                "request_id": "r1",
+                "certificate": continuity_1,
+                "signature_b64": "unused",
+                "public_key_b64": "unused",
+            }
+        ),
+        encoding="utf-8",
+    )
+    anchor_bundle_path = tmp_path / "identity_anchor.json"
+    anchor_bundle_path.write_text(
+        json.dumps(
+            {
+                "request_id": "a1",
+                "certificate": anchor,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ok, reason = verify_certificate_file(
+        str(cert_bundle_path),
+        registry_public_key_b64=registry_public_b64,
+        profile="strict",
+        identity_anchor_path=str(anchor_bundle_path),
+    )
+    assert ok is True
+    assert reason == "ok"

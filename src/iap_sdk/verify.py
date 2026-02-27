@@ -25,6 +25,17 @@ def _load_json(path: str | None) -> dict | None:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _extract_certificate(payload: dict | None) -> dict | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("certificate")
+    if isinstance(nested, dict):
+        return nested
+    return payload
+
+
 def verify_certificate(
     certificate: dict,
     *,
@@ -151,12 +162,12 @@ def verify_certificate_file(
     witness_bundle: list[dict] | None = None,
     min_witnesses: int = 0,
 ) -> tuple[bool, str]:
-    certificate = _load_json(certificate_path)
+    certificate = _extract_certificate(_load_json(certificate_path))
     if certificate is None:
         return False, "certificate not found"
 
-    identity_anchor = _load_json(identity_anchor_path)
-    previous_certificate = _load_json(previous_certificate_path)
+    identity_anchor = _extract_certificate(_load_json(identity_anchor_path))
+    previous_certificate = _extract_certificate(_load_json(previous_certificate_path))
 
     return verify_certificate(
         certificate,
