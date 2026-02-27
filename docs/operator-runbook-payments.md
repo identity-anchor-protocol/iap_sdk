@@ -107,7 +107,8 @@ iap-agent continuity pay --registry-base "$REGISTRY_BASE" --request-id <request-
 ```bash
 iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <request-id> --timeout-seconds 600 --poll-seconds 5 --json
 iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request-id> --output-file ./continuity_record.json --json
-iap-agent verify ./continuity_record.json --registry-base "$REGISTRY_BASE" --json
+REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
+iap-agent verify ./continuity_record.json --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
 ```
 
 ## C) Lightning/OpenNode path (explicit)
@@ -147,7 +148,8 @@ Pay `lightning_invoice` from the output.
 ```bash
 iap-agent continuity wait --registry-base "$REGISTRY_BASE" --request-id <request-id> --timeout-seconds 600 --poll-seconds 5 --json
 iap-agent continuity cert --registry-base "$REGISTRY_BASE" --request-id <request-id> --output-file ./continuity_record.json --json
-iap-agent verify ./continuity_record.json --registry-base "$REGISTRY_BASE" --json
+REGISTRY_PUBLIC_KEY_B64="$(curl -s "$REGISTRY_BASE/registry/public-key" | jq -r .public_key_b64)"
+iap-agent verify ./continuity_record.json --registry-public-key-b64 "$REGISTRY_PUBLIC_KEY_B64" --json
 ```
 
 ## Notes
