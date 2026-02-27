@@ -61,11 +61,18 @@ export REGISTRY_BASE="http://localhost:8080"
 ## Step 1: Create agent key pair
 
 ```bash
-INIT_JSON="$(iap-agent init --show-public --json)"
+INIT_JSON="$(iap-agent init --project-local --show-public --json)"
 echo "$INIT_JSON"
 AGENT_ID="$(echo "$INIT_JSON" | jq -r .agent_id)"
 echo "AGENT_ID=$AGENT_ID"
 ```
+
+Why `--project-local` matters:
+
+- It writes the identity into `./.iap/identity/ed25519.json` for this project.
+- Without it, `iap-agent` may reuse the global identity at `~/.iap_agent/identity/ed25519.json`.
+- Reusing the global identity is correct only when you intentionally want to continue the same
+  agent across folders.
 
 ## Step 2: Create and store identity files in AMCS
 
@@ -132,6 +139,21 @@ CONT_STATUS="$(echo "$CONT_JSON" | jq -r .status)"
 echo "CONT_REQUEST_ID=$CONT_REQUEST_ID"
 echo "CONT_STATUS=$CONT_STATUS"
 ```
+
+If you get a conflict like:
+
+- `ledger_sequence must strictly increase; latest registry sequence is X`
+
+check what the registry already knows about this `agent_id`:
+
+```bash
+iap-agent registry status --registry-base "$REGISTRY_BASE" --agent-id "$AGENT_ID" --json
+```
+
+Use that output to decide:
+
+- Continue the same agent: raise your local continuity sequence and reconcile your AMCS state.
+- Create a new agent: start in a new folder and run `iap-agent init --project-local ...`.
 
 Pay invoice in your Lightning wallet if continuity is not yet `CERTIFIED`.
 
