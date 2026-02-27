@@ -124,3 +124,27 @@ def test_init_json_includes_private_key_with_explicit_flag(tmp_path) -> None:
     assert rc == 0
     payload = json.loads(out.getvalue())
     assert isinstance(payload["private_key_b64"], str)
+
+
+def test_init_project_local_identity_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(["init", "--project-local", "--json"], stdout=out, stderr=err)
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["identity_path"] == str(tmp_path / ".iap" / "identity" / "ed25519.json")
+
+
+def test_init_project_local_conflicts_with_identity_file(tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+    identity_path = tmp_path / "identity.json"
+    rc = main(
+        ["init", "--project-local", "--identity-file", str(identity_path), "--json"],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 1
+    assert "cannot use --project-local together with --identity-file" in err.getvalue()

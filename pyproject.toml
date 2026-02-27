@@ -24,6 +24,7 @@ classifiers = [
   "Topic :: Security :: Cryptography",
 ]
 dependencies = [
+  "amcs>=0.1.0",
   "cryptography>=42",
   "pydantic>=2.7",
   "PyYAML>=6.0",

@@ -17,7 +17,7 @@ from typing import Sequence
 from uuid import uuid4
 
 from iap_sdk.certificates import PROTOCOL_VERSION
-from iap_sdk.cli.amcs import AMCSError, get_amcs_root
+from iap_sdk.cli.amcs import AMCSError, append_files_to_amcs, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
 from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
 from iap_sdk.cli.sessions import SessionError, save_session_record
@@ -95,6 +95,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
     )
     init.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Store identity under ./.iap/identity/ed25519.json for this project",
+    )
+    init.add_argument(
         "--show-public",
         action="store_true",
         help="Print only public fields (agent_id + public_key_b64)",
@@ -140,6 +145,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to local identity file when deriving agent_id fallback",
     )
     amcs_root.add_argument("--json", action="store_true", help="Print AMCS root details as JSON")
+    amcs_append = amcs_sub.add_parser("append", help="Append local files into AMCS as state events")
+    amcs_append.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
+    amcs_append.add_argument("--agent-id", default=None, help="Agent id for AMCS append")
+    amcs_append.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file when deriving agent_id fallback",
+    )
+    amcs_append.add_argument(
+        "--file",
+        dest="files",
+        action="append",
+        default=[],
+        help="File path to append (repeat flag for multiple files)",
+    )
+    # Legacy aliases used by earlier walkthrough/scripts.
+    amcs_append.add_argument("--agent-file", default=None, help="Alias for --file")
+    amcs_append.add_argument("--soul-file", default=None, help="Alias for --file")
+    amcs_append.add_argument("--json", action="store_true", help="Print append details as JSON")
 
     anchor = sub.add_parser("anchor", help="Create a state anchor (or legacy identity-anchor ops)")
     anchor.add_argument(
@@ -152,7 +176,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
     )
-    anchor.add_argument("--agent-name", default="Local Agent")
+    anchor.add_argument("--agent-name", default=None)
     anchor.add_argument("--agent-custody-class", default=None)
     anchor.add_argument("--memory-root", default=None)
     anchor.add_argument("--sequence", type=int, default=None)
@@ -188,7 +212,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     anchor_identity.add_argument(
         "--agent-name",
-        default="Local Agent",
+        default=None,
         help="Optional agent display name metadata",
     )
     anchor_identity.add_argument(
@@ -220,7 +244,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     anchor_issue.add_argument(
         "--agent-name",
-        default="Local Agent",
+        default=None,
         help="Optional agent display name metadata",
     )
     anchor_issue.add_argument(
@@ -236,6 +260,22 @@ def _build_parser() -> argparse.ArgumentParser:
     anchor_issue.add_argument("--timeout-seconds", type=int, default=300)
     anchor_issue.add_argument("--poll-seconds", type=int, default=5)
     anchor_issue.add_argument("--json", action="store_true", help="Print response as JSON")
+    anchor_cert = anchor_sub.add_parser("cert", help="Fetch and save identity-anchor certificate")
+    anchor_cert.add_argument("--request-id", required=True)
+    anchor_cert.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    anchor_cert.add_argument(
+        "--output-file",
+        default=None,
+        help=(
+            "Path for certificate bundle JSON "
+            "(default: <sessions_dir>/certificates/identity_anchor_<request_id>.json)"
+        ),
+    )
+    anchor_cert.add_argument("--json", action="store_true")
 
     continuity = sub.add_parser("continuity", help="Continuity operations")
     continuity_sub = continuity.add_subparsers(dest="continuity_command", required=True)
@@ -252,7 +292,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
     )
-    continuity_request.add_argument("--agent-name", default="Local Agent")
+    continuity_request.add_argument("--agent-name", default=None)
     continuity_request.add_argument("--agent-custody-class", default=None)
     continuity_request.add_argument("--memory-root", default=None)
     continuity_request.add_argument("--sequence", type=int, default=None)
@@ -323,7 +363,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     flow_run.add_argument(
         "--agent-name",
-        default="Local Agent",
+        default=None,
         help="Optional agent display name metadata",
     )
     flow_run.add_argument("--agent-custody-class", default=None)
@@ -407,8 +447,19 @@ def _coming_soon(*, path: str, stdout) -> int:
 
 
 def _run_init(*, args, stdout, stderr) -> int:
+    identity_file = args.identity_file
+    if args.project_local:
+        if identity_file:
+            return _print_error(
+                stderr,
+                "identity error",
+                "cannot use --project-local together with --identity-file",
+                code=EXIT_VALIDATION_ERROR,
+            )
+        identity_file = str(Path.cwd() / ".iap" / "identity" / "ed25519.json")
+
     try:
-        identity, created, identity_path = load_or_create_identity(args.identity_file)
+        identity, created, identity_path = load_or_create_identity(identity_file)
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
@@ -607,6 +658,72 @@ def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _run_amcs_append(*, args, config: CLIConfig, stdout, stderr) -> int:
+    amcs_db_path = args.amcs_db or config.amcs_db_path
+
+    agent_id = args.agent_id
+    if not agent_id:
+        try:
+            identity, _ = load_identity(args.identity_file)
+            agent_id = identity.agent_id
+        except IdentityError as exc:
+            return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    file_paths = list(args.files or [])
+    if args.agent_file:
+        file_paths.append(args.agent_file)
+    if args.soul_file:
+        file_paths.append(args.soul_file)
+    if not file_paths:
+        return _print_error(
+            stderr,
+            "amcs error",
+            "no files provided; use --file (or --agent-file/--soul-file)",
+            code=EXIT_VALIDATION_ERROR,
+        )
+
+    try:
+        result = append_files_to_amcs(
+            amcs_db_path=amcs_db_path,
+            agent_id=agent_id,
+            file_paths=file_paths,
+        )
+    except AMCSError as exc:
+        return _print_error(stderr, "amcs error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = {
+        "agent_id": result.agent_id,
+        "amcs_db_path": result.amcs_db_path,
+        "sequence": result.sequence,
+        "memory_root": result.memory_root,
+        "items": [
+            {"path": item.path, "sequence": item.sequence, "event_hash": item.event_hash}
+            for item in result.items
+        ],
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"amcs_db_path: {payload['amcs_db_path']}", file=stdout)
+    print(f"sequence: {payload['sequence']}", file=stdout)
+    print(f"memory_root: {payload['memory_root']}", file=stdout)
+    for item in payload["items"]:
+        print(
+            f"appended: path={item['path']} sequence={item['sequence']} hash={item['event_hash']}",
+            file=stdout,
+        )
+    return EXIT_SUCCESS
+
+
+def _resolve_agent_name(args, config: CLIConfig) -> str:
+    value = getattr(args, "agent_name", None)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return config.agent_name
+
+
 def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         identity, _ = load_identity(args.identity_file)
@@ -614,12 +731,13 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     registry_base = args.registry_base or config.registry_base
+    agent_name = _resolve_agent_name(args, config)
     client = RegistryClient(base_url=registry_base)
     payload = sign_identity_anchor_request(
         build_identity_anchor_request(
             agent_public_key_b64=identity.public_key_b64,
             agent_id=identity.agent_id,
-            metadata={"agent_name": args.agent_name},
+            metadata={"agent_name": agent_name},
         ),
         identity.private_key_bytes,
     )
@@ -693,6 +811,38 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _run_anchor_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base)
+    try:
+        bundle = client.get_identity_anchor_certificate(args.request_id)
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    if args.output_file:
+        output_path = Path(args.output_file)
+    else:
+        output_path = (
+            Path(config.sessions_dir) / "certificates" / f"identity_anchor_{args.request_id}.json"
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(bundle, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+    output = {
+        "request_id": args.request_id,
+        "registry_base": registry_base,
+        "output_file": str(output_path),
+        "certificate_type": (bundle.get("certificate") or {}).get("certificate_type"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"certificate_type: {output['certificate_type']}", file=stdout)
+    print(f"output_file: {output['output_file']}", file=stdout)
+    return EXIT_SUCCESS
+
+
 def _run_anchor_state(*, args, config: CLIConfig, stdout, stderr) -> int:
     if args.local_only:
         try:
@@ -734,7 +884,7 @@ def _run_anchor_state(*, args, config: CLIConfig, stdout, stderr) -> int:
     continuity_args = argparse.Namespace(
         registry_base=args.registry_base,
         identity_file=args.identity_file,
-        agent_name=args.agent_name,
+        agent_name=_resolve_agent_name(args, config),
         agent_custody_class=args.agent_custody_class,
         memory_root=args.memory_root,
         sequence=args.sequence,
@@ -848,9 +998,10 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
         if sequence is None:
             sequence = amcs.sequence
 
+    agent_name = _resolve_agent_name(args, config)
     manifest = build_identity_manifest(
         {
-            "AGENT.md": f"{args.agent_name}\n",
+            "AGENT.md": f"{agent_name}\n",
             "SOUL.md": "Purpose: continuity certification via iap-agent CLI\n",
         }
     )
@@ -858,7 +1009,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     payload = build_continuity_request(
         agent_public_key_b64=identity.public_key_b64,
         agent_id=identity.agent_id,
-        agent_name=args.agent_name,
+        agent_name=agent_name,
         agent_custody_class=args.agent_custody_class,
         memory_root=memory_root,
         sequence=sequence,
@@ -1103,6 +1254,7 @@ def _print_step(stdout, *, index: int, total: int, title: str) -> None:
 
 def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     total_steps = 8
+    agent_name = _resolve_agent_name(args, config)
     registry_base = args.registry_base or config.registry_base
     timeout_seconds = max(1, int(args.request_timeout_seconds))
     poll_seconds = max(1, int(args.poll_seconds))
@@ -1121,7 +1273,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
             {
                 "agent_public_key_b64": identity.public_key_b64,
                 "agent_id": identity.agent_id,
-                "metadata": {"agent_name": args.agent_name},
+                "metadata": {"agent_name": agent_name},
             }
         )
     except RegistryUnavailableError as exc:
@@ -1173,14 +1325,14 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     _print_step(stdout, index=4, total=total_steps, title="submitting continuity request")
     manifest = build_identity_manifest(
         {
-            "AGENT.md": f"{args.agent_name}\n",
+            "AGENT.md": f"{agent_name}\n",
             "SOUL.md": "Purpose: continuity certification via iap-agent CLI\n",
         }
     )
     payload = build_continuity_request(
         agent_public_key_b64=identity.public_key_b64,
         agent_id=identity.agent_id,
-        agent_name=args.agent_name,
+        agent_name=agent_name,
         agent_custody_class=args.agent_custody_class,
         memory_root=memory_root,
         sequence=sequence,
@@ -1349,6 +1501,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "amcs":
         if args.amcs_command == "root":
             return _run_amcs_root(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.amcs_command == "append":
+            return _run_amcs_append(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"amcs {args.amcs_command}", stdout=stdout)
 
     if args.command == "anchor":
@@ -1358,6 +1512,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
             return _run_anchor_issue(args=args, config=config, stdout=stdout, stderr=stderr)
         if args.anchor_command == "identity":
             return _run_anchor_issue(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.anchor_command == "cert":
+            return _run_anchor_cert(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"anchor {args.anchor_command}", stdout=stdout)
 
     if args.command == "continuity":

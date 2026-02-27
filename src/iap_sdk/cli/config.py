@@ -17,6 +17,7 @@ class CLIConfig:
     beta_mode: bool = True
     maturity_level: str = "beta"
     registry_base: str = DEFAULT_REGISTRY_BASE
+    agent_name: str = "Local Agent"
     amcs_db_path: str = "./amcs.db"
     sessions_dir: str = str(Path.home() / ".iap_agent" / "sessions")
     registry_public_key_b64: str | None = None
@@ -83,6 +84,10 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
     if not registry_base:
         raise ConfigError("registry_base must not be empty")
 
+    agent_name = str(source.get("agent_name", "Local Agent")).strip()
+    if not agent_name:
+        raise ConfigError("agent_name must not be empty")
+
     amcs_db_path = str(source.get("amcs_db_path", "./amcs.db")).strip()
     if not amcs_db_path:
         raise ConfigError("amcs_db_path must not be empty")
@@ -101,6 +106,7 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         beta_mode=beta_mode,
         maturity_level=maturity_level,
         registry_base=registry_base,
+        agent_name=agent_name,
         amcs_db_path=amcs_db_path,
         sessions_dir=sessions_dir,
         registry_public_key_b64=registry_public_key_b64,

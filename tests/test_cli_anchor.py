@@ -118,3 +118,69 @@ def test_anchor_issue_missing_identity(monkeypatch) -> None:
     rc = main(["anchor", "issue"], stdout=out, stderr=err)
     assert rc == 1
     assert "identity error:" in err.getvalue()
+
+
+def test_anchor_issue_uses_config_agent_name(monkeypatch, tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[cli]\nagent_name = \"Configured Atlas\"\n", encoding="utf-8")
+
+    monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
+
+    class _Client:
+        def __init__(self, *, base_url: str) -> None:
+            self.base_url = base_url
+
+        def submit_identity_anchor(self, payload: dict) -> dict:
+            assert payload["metadata"]["agent_name"] == "Configured Atlas"
+            return {"request_id": "req-anchor-2", "status": "WAITING_PAYMENT"}
+
+        def create_stripe_checkout_session(self, *, request_id: str, **kwargs) -> dict:  # noqa: ARG002
+            return {"session_id": "cs_anchor_2", "checkout_url": "https://checkout"}
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        ["--config", str(config_path), "anchor", "issue", "--json"],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+
+
+def test_anchor_cert_writes_bundle(monkeypatch, tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+    output_file = tmp_path / "identity_anchor_record.json"
+
+    class _Client:
+        def __init__(self, *, base_url: str) -> None:
+            self.base_url = base_url
+
+        def get_identity_anchor_certificate(self, request_id: str) -> dict:
+            assert request_id == "anchor-req-1"
+            return {
+                "request_id": request_id,
+                "certificate": {"certificate_type": "IAP-Identity-0.1"},
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "anchor",
+            "cert",
+            "--request-id",
+            "anchor-req-1",
+            "--output-file",
+            str(output_file),
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["certificate_type"] == "IAP-Identity-0.1"
+    assert output_file.exists()
