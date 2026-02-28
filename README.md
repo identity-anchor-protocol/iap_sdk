@@ -150,7 +150,7 @@ See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 
 If you hit a bug, an upgrade issue, or have recommendations for improvement, contact:
 
-- `admin@iap-protocol.com`
+- `admin@ia-protocol.com`
 
 ## Docs
 
