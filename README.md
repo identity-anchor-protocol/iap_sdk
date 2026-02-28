@@ -71,6 +71,15 @@ For a clean-room install smoke test, run:
 ./scripts/smoke_install.sh
 ```
 
+Run the hardened closeout verification script against a live registry and issued records:
+
+```bash
+python scripts/final_live_test.py \
+  --registry-base https://registry.ia-protocol.com \
+  --identity-anchor ./identity_anchor_record.json \
+  --continuity-record ./continuity_record.json
+```
+
 Validate CLI snippets in docs:
 
 ```bash
@@ -141,7 +150,11 @@ See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 - `/docs/troubleshooting.md`
 - `/docs/migration-cli-first.md`
 - `/docs/transition-terminology.md`
+- `/docs/final-live-test.md`
+- `/docs/security-assumptions.md`
 - `/examples/state-drift-demo/README.md`
+- `/RELEASE.md`
+- `/RELEASE_NOTES_TEMPLATE.md`
 
 ## Drift demo
 

@@ -1,0 +1,38 @@
+name: Security Audit
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install audit tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+
+      - name: Export runtime requirements
+        run: |
+          python - <<'PY' > requirements-runtime.txt
+from pathlib import Path
+import tomllib
+
+data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+for dep in data["project"]["dependencies"]:
+    print(dep)
+PY
+
+      - name: Audit runtime dependencies
+        run: pip-audit -r requirements-runtime.txt
