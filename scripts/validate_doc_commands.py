@@ -2,11 +2,19 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import re
 import shlex
+import sys
 from pathlib import Path
 
-from iap_sdk.cli.main import _build_parser
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from iap_sdk.cli.main import _build_parser  # noqa: E402
 
 
 def _extract_iap_commands(text: str) -> list[str]:
@@ -56,9 +64,12 @@ def main() -> int:
             if any(token.startswith("<") and token.endswith(">") for token in argv):
                 continue
             try:
-                cli_parser.parse_args(argv)
-            except SystemExit:
-                errors.append(f"{path}: invalid command snippet: {command}")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        cli_parser.parse_args(argv)
+            except SystemExit as exc:
+                if exc.code not in (0, None):
+                    errors.append(f"{path}: invalid command snippet: {command}")
 
     if errors:
         print("doc command validation failed:")

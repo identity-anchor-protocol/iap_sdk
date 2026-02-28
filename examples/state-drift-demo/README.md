@@ -1,5 +1,7 @@
 # State Drift Demo (Under 5 Minutes)
 
+This is the minimal hardened v0.1 demo artifact for third-party validation.
+
 This demo shows the exact transition scenario:
 
 1. Agent defined
@@ -8,11 +10,19 @@ This demo shows the exact transition scenario:
 4. Memory silently modified
 5. Verification fails
 
+It demonstrates:
+
+- normal flow up to an anchorable state root
+- tamper detection after a historical AMCS mutation
+
+Fork / divergence is not modeled in this demo because v0.1 hardening only requires
+"detect + fail" for direct historical mutation.
+
 ## Prerequisites
 
 - Python 3.11+
 - `iap-sdk` installed (editable or package)
-- `amcs` package available in the same environment
+- `iap-amcs` package available in the same environment
 
 ## Run
 
