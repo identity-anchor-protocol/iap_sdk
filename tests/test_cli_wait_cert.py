@@ -11,8 +11,9 @@ def test_continuity_wait_success(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_continuity_status(self, request_id: str) -> dict:
             assert request_id == "req-wait"
@@ -31,8 +32,9 @@ def test_continuity_wait_timeout(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_continuity_status(self, request_id: str) -> dict:  # noqa: ARG002
             return {"status": "WAITING_PAYMENT"}
@@ -75,8 +77,9 @@ def test_continuity_cert_fetch_and_write(monkeypatch, tmp_path) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def get_continuity_certificate(self, request_id: str) -> dict:
             assert request_id == "req-cert"

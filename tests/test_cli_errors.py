@@ -11,7 +11,7 @@ def test_registry_error_redacts_query_secret(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:  # noqa: ARG002
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:  # noqa: ARG002
             pass
 
         def create_stripe_checkout_session(self, *, request_id: str, **kwargs) -> dict:  # noqa: ARG002
@@ -33,7 +33,7 @@ def test_registry_error_redacts_named_secret_field(monkeypatch) -> None:
     err = io.StringIO()
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:  # noqa: ARG002
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:  # noqa: ARG002
             pass
 
         def get_continuity_status(self, request_id: str) -> dict:  # noqa: ARG002

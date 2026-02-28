@@ -19,6 +19,9 @@ Local editable development install:
 python -m pip install -e ".[dev]"
 ```
 
+For clean public installs, use `iap-agent >= 0.1.5`. That is the first release that depends on the
+correct PyPI package name for AMCS (`iap-amcs`).
+
 ## What this package provides
 
 - Deterministic `agent_id` derivation from Ed25519 public keys
@@ -89,7 +92,31 @@ iap verify ./continuity_record.json --registry-public-key-b64 <key>
 
 # Legacy CLI remains supported in v0.1.x:
 iap-agent continuity request --registry-base https://registry.ia-protocol.com --json
+iap-agent registry status --registry-base https://registry.ia-protocol.com --json
 ```
+
+### Fresh identity vs existing identity
+
+- `iap-agent init --project-local` creates a new identity in the current project at
+  `./.iap/identity/ed25519.json`.
+- `iap-agent init` without `--project-local` uses the global identity at
+  `~/.iap_agent/identity/ed25519.json` if it already exists.
+
+Use `--project-local` when you want a genuinely new agent. Use the global identity only when you
+intentionally want to continue the same agent across different folders.
+
+If a continuity request fails with:
+
+- `ledger_sequence must strictly increase; latest registry sequence is X`
+
+inspect the current registry state:
+
+```bash
+iap-agent registry status --registry-base https://registry.ia-protocol.com --json
+```
+
+That shows whether this `agent_id` already has an identity anchor and what the latest certified
+continuity sequence is.
 
 ### CLI exit codes
 
@@ -140,6 +167,7 @@ Example:
 beta_mode = true
 maturity_level = "beta"
 registry_base = "https://registry.ia-protocol.com"
+registry_api_key = "iap_live_optional"
 amcs_db_path = "./amcs.db"
 ```
 
@@ -147,6 +175,7 @@ Environment override:
 
 ```bash
 export IAP_REGISTRY_BASE="https://registry.ia-protocol.com"
+export IAP_REGISTRY_API_KEY="iap_live_optional"
 ```
 
 Local development override example:

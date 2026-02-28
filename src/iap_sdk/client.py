@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 
-from iap_sdk.errors import RegistryUnavailableError, SDKTimeoutError
+from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
+
+REGISTRY_API_KEY_ENV_VAR = "IAP_REGISTRY_API_KEY"
 
 
 @dataclass
 class RegistryClient:
     base_url: str
+    api_key: str | None = None
     timeout: float = 10.0
     retries: int = 2
 
@@ -37,24 +41,48 @@ class RegistryClient:
         adapter = HTTPAdapter(max_retries=retry)
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
+        if self.api_key is None:
+            env_api_key = os.getenv(REGISTRY_API_KEY_ENV_VAR)
+            self.api_key = env_api_key.strip() or None if env_api_key else None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
 
     def _request(self, method: str, path: str, *, json_payload: dict | None = None) -> dict:
+        headers = {"x-iap-api-key": self.api_key} if self.api_key else None
         try:
             response = self._session.request(
                 method,
                 self._url(path),
                 json=json_payload,
+                headers=headers,
                 timeout=self.timeout,
             )
         except Exception as exc:  # pragma: no cover
             raise RegistryUnavailableError(str(exc)) from exc
 
         if response.status_code >= 400:
-            raise RegistryUnavailableError(
-                f"registry request failed: {response.status_code} {response.text}"
+            body: object | None = None
+            detail: object | None = None
+            error_code: str | None = None
+            try:
+                body = response.json()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                detail = body.get("detail")
+                raw_error_code = body.get("error_code")
+                error_code = str(raw_error_code) if isinstance(raw_error_code, str) else None
+            if isinstance(detail, str):
+                message = f"registry request failed: {response.status_code} {detail}"
+            else:
+                message = f"registry request failed: {response.status_code} {response.text}"
+            raise RegistryRequestError(
+                message,
+                status_code=response.status_code,
+                detail=detail,
+                error_code=error_code,
+                body=body,
             )
         return response.json()
 
@@ -108,6 +136,9 @@ class RegistryClient:
 
     def get_public_registry_key(self) -> dict:
         return self._request("GET", "/registry/public-key")
+
+    def get_agent_registry_status(self, agent_id: str) -> dict:
+        return self._request("GET", f"/v1/registry/agents/{agent_id}/status")
 
     def wait_for_certification(
         self,

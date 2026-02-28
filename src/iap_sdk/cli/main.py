@@ -29,7 +29,7 @@ from iap_sdk.cli.tracking import (
     load_track_config,
 )
 from iap_sdk.client import RegistryClient
-from iap_sdk.errors import RegistryUnavailableError, SDKTimeoutError
+from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
 from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import (
     build_continuity_request,
@@ -123,6 +123,25 @@ def _build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--identity-file", default=None)
     commit.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
     commit.add_argument("--json", action="store_true")
+
+    registry = sub.add_parser("registry", help="Inspect registry state")
+    registry_sub = registry.add_subparsers(dest="registry_command", required=True)
+    registry_status = registry_sub.add_parser(
+        "status", help="Show registry status for an agent_id"
+    )
+    registry_status.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    registry_status.add_argument("--agent-id", default=None, help="Agent id to inspect")
+    registry_status.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file when deriving agent_id fallback",
+    )
+    registry_status.add_argument("--json", action="store_true")
+
     verify = sub.add_parser("verify", help="Verify continuity record offline")
     verify.add_argument("certificate_json")
     verify.add_argument("--registry-public-key-b64", default=None)
@@ -417,6 +436,30 @@ def _print_error(stderr, prefix: str, message: str, *, code: int) -> int:
     return code
 
 
+def _print_registry_request_error(stderr, exc: RegistryRequestError, *, code: int) -> int:
+    if exc.status_code == 401 and exc.detail == "invalid api key":
+        return _print_error(
+            stderr,
+            "registry error",
+            (
+                "invalid registry API key. Update `IAP_REGISTRY_API_KEY` or the "
+                "`registry_api_key` value in your config, or remove it to use the payment flow."
+            ),
+            code=code,
+        )
+    if exc.status_code == 429 and exc.detail == "api key quota exceeded":
+        return _print_error(
+            stderr,
+            "registry error",
+            (
+                "registry API key quota exceeded for this billing window. Use a different API key, "
+                "wait for quota reset, or retry without the API key to use the payment flow."
+            ),
+            code=code,
+        )
+    return _print_error(stderr, "registry error", str(exc), code=code)
+
+
 def _run_version(*, config: CLIConfig, as_json: bool, stdout) -> int:
     payload = {
         "cli": "iap-agent",
@@ -624,6 +667,52 @@ def _run_commit(*, args, config: CLIConfig, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
+    agent_id = args.agent_id
+    if not agent_id:
+        try:
+            identity, _ = load_identity(args.identity_file)
+            agent_id = identity.agent_id
+        except IdentityError as exc:
+            return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    try:
+        status = client.get_agent_registry_status(agent_id)
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    payload = {
+        "agent_id": agent_id,
+        "registry_base": registry_base,
+        "has_identity_anchor": bool(status.get("has_identity_anchor")),
+        "identity_anchor_request_id": status.get("identity_anchor_request_id"),
+        "identity_anchor_issued_at": status.get("identity_anchor_issued_at"),
+        "latest_continuity_sequence": status.get("latest_continuity_sequence"),
+        "latest_continuity_memory_root": status.get("latest_continuity_memory_root"),
+        "latest_continuity_request_id": status.get("latest_continuity_request_id"),
+        "latest_continuity_issued_at": status.get("latest_continuity_issued_at"),
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"registry_base: {payload['registry_base']}", file=stdout)
+    print(f"has_identity_anchor: {payload['has_identity_anchor']}", file=stdout)
+    print(f"identity_anchor_request_id: {payload['identity_anchor_request_id']}", file=stdout)
+    print(f"identity_anchor_issued_at: {payload['identity_anchor_issued_at']}", file=stdout)
+    print(f"latest_continuity_sequence: {payload['latest_continuity_sequence']}", file=stdout)
+    print(
+        f"latest_continuity_memory_root: {payload['latest_continuity_memory_root']}",
+        file=stdout,
+    )
+    print(f"latest_continuity_request_id: {payload['latest_continuity_request_id']}", file=stdout)
+    print(f"latest_continuity_issued_at: {payload['latest_continuity_issued_at']}", file=stdout)
+    return EXIT_SUCCESS
+
+
 def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     amcs_db_path = args.amcs_db or config.amcs_db_path
 
@@ -732,7 +821,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     registry_base = args.registry_base or config.registry_base
     agent_name = _resolve_agent_name(args, config)
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     payload = sign_identity_anchor_request(
         build_identity_anchor_request(
             agent_public_key_b64=identity.public_key_b64,
@@ -744,6 +833,8 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     try:
         response = client.submit_identity_anchor(payload)
+    except RegistryRequestError as exc:
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
     except RegistryUnavailableError as exc:
         return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
@@ -813,7 +904,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_anchor_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         bundle = client.get_identity_anchor_certificate(args.request_id)
     except RegistryUnavailableError as exc:
@@ -1019,9 +1110,25 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     signed_payload = sign_continuity_request(payload, identity.private_key_bytes)
 
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         response = client.submit_continuity_request(signed_payload)
+    except RegistryRequestError as exc:
+        if (
+            exc.status_code == 409
+            and isinstance(exc.detail, str)
+            and "latest registry sequence is" in exc.detail
+        ):
+            return _print_error(
+                stderr,
+                "registry error",
+                (
+                    f"{exc.detail}. Run `iap-agent registry status --agent-id {identity.agent_id}` "
+                    "to inspect the current registry state, or initialize a new identity."
+                ),
+                code=EXIT_NETWORK_ERROR,
+            )
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
     except RegistryUnavailableError as exc:
         return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
@@ -1082,7 +1189,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
 
     try:
         output = _resolve_payment_handoff(
@@ -1118,7 +1225,7 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
     timeout_seconds = max(1, int(args.timeout_seconds))
     poll_seconds = max(1, int(args.poll_seconds))
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
 
     deadline = time.time() + timeout_seconds
     latest = None
@@ -1157,7 +1264,7 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
     try:
         bundle = client.get_continuity_certificate(args.request_id)
     except RegistryUnavailableError as exc:
@@ -1199,7 +1306,7 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
                 code=EXIT_VALIDATION_ERROR,
             )
         registry_base = args.registry_base or config.registry_base
-        client = RegistryClient(base_url=registry_base)
+        client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
         try:
             key_payload = client.get_public_registry_key()
         except RegistryUnavailableError as exc:
@@ -1265,7 +1372,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
-    client = RegistryClient(base_url=registry_base)
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
 
     _print_step(stdout, index=2, total=total_steps, title="ensuring identity anchor")
     try:
@@ -1494,6 +1601,11 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
 
     if args.command == "commit":
         return _run_commit(args=args, config=config, stdout=stdout, stderr=stderr)
+
+    if args.command == "registry":
+        if args.registry_command == "status":
+            return _run_registry_status(args=args, config=config, stdout=stdout, stderr=stderr)
+        return _coming_soon(path=f"registry {args.registry_command}", stdout=stdout)
 
     if args.command == "verify":
         return _run_verify(args=args, config=config, stdout=stdout, stderr=stderr)

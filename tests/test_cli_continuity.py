@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.serialization import (
 from iap_sdk.cli.amcs import AMCSError, AMCSRootResult
 from iap_sdk.cli.identity import LocalIdentity
 from iap_sdk.cli.main import main
+from iap_sdk.errors import RegistryRequestError
 
 
 def _identity() -> LocalIdentity:
@@ -44,8 +45,9 @@ def test_continuity_request_from_amcs_writes_session(monkeypatch, tmp_path) -> N
     )
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["agent_id"] == identity.agent_id
@@ -104,8 +106,9 @@ def test_continuity_request_explicit_root_sequence_skips_amcs(monkeypatch, tmp_p
     monkeypatch.setattr("iap_sdk.cli.main.get_amcs_root", fail_amcs)
 
     class _Client:
-        def __init__(self, *, base_url: str) -> None:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
             self.base_url = base_url
+            self.api_key = api_key
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["memory_root"] == "a" * 64
@@ -138,3 +141,110 @@ def test_continuity_request_explicit_root_sequence_skips_amcs(monkeypatch, tmp_p
     assert rc == 0
     assert "request_id: req-555" in out.getvalue()
     assert err.getvalue().startswith("[beta]")
+
+
+def test_continuity_request_sequence_conflict_shows_actionable_hint(monkeypatch, tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    identity = _identity()
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (identity, Path(path or "id")),
+    )
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.get_amcs_root",
+        lambda *, amcs_db_path, agent_id: AMCSRootResult(
+            agent_id=agent_id,
+            amcs_db_path=amcs_db_path,
+            memory_root="b" * 64,
+            sequence=1,
+        ),
+    )
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 409",
+                status_code=409,
+                detail="ledger_sequence must strictly increase; latest registry sequence is 4",
+                error_code="conflict",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "continuity",
+            "request",
+            "--registry-base",
+            "http://registry.local",
+            "--sessions-dir",
+            str(tmp_path / "sessions"),
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 2
+    assert out.getvalue() == ""
+    message = err.getvalue()
+    assert "registry error:" in message
+    assert "latest registry sequence is 4" in message
+    assert "iap-agent registry status" in message
+
+
+def test_continuity_request_invalid_api_key_has_actionable_error(monkeypatch, tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    identity = _identity()
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (identity, Path(path or "id")),
+    )
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.get_amcs_root",
+        lambda *, amcs_db_path, agent_id: AMCSRootResult(
+            agent_id=agent_id,
+            amcs_db_path=amcs_db_path,
+            memory_root="b" * 64,
+            sequence=1,
+        ),
+    )
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 401 invalid api key",
+                status_code=401,
+                detail="invalid api key",
+                error_code="unauthorized",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "continuity",
+            "request",
+            "--registry-base",
+            "http://registry.local",
+            "--sessions-dir",
+            str(tmp_path / "sessions"),
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 2
+    assert out.getvalue() == ""
+    assert "invalid registry API key" in err.getvalue()

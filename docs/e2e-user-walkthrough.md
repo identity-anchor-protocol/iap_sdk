@@ -42,12 +42,19 @@ EOF
 
 ## 1) Create your local agent identity
 
+Recommended for a fresh agent project: create a project-local identity so this folder gets its own
+keypair and does not silently reuse `~/.iap_agent/identity/ed25519.json`.
+
 ```bash
-INIT_JSON="$(iap-agent init --show-public --json)"
+INIT_JSON="$(iap-agent init --project-local --show-public --json)"
 echo "$INIT_JSON"
 AGENT_ID="$(echo "$INIT_JSON" | jq -r .agent_id)"
 echo "AGENT_ID=$AGENT_ID"
 ```
+
+If you omit `--project-local`, `iap-agent` uses the global default identity file under
+`~/.iap_agent/identity/ed25519.json`. That is useful when you intentionally want to continue the
+same agent across multiple folders, but it is the wrong default for “create a brand-new test agent”.
 
 ## 2) Create agent files and store them in AMCS
 
@@ -68,12 +75,7 @@ EOF
 Append both files into local AMCS database:
 
 ```bash
-iap-agent amcs append \
-  --amcs-db ./amcs.db \
-  --agent-id "$AGENT_ID" \
-  --file ./AGENT.md \
-  --file ./SOUL.md \
-  --json
+iap-agent amcs append --amcs-db ./amcs.db --agent-id "$AGENT_ID" --file ./AGENT.md --file ./SOUL.md --json
 ```
 
 The command prints the latest memory root.
@@ -132,6 +134,25 @@ CONT_STATUS="$(echo "$CONT_JSON" | jq -r .status)"
 echo "CONT_REQUEST_ID=$CONT_REQUEST_ID"
 echo "CONT_STATUS=$CONT_STATUS"
 ```
+
+If this command fails with a message like:
+
+- `ledger_sequence must strictly increase; latest registry sequence is X`
+
+it means this `agent_id` already has newer registry history than your local AMCS state.
+
+Inspect current registry state:
+
+```bash
+iap-agent registry status --registry-base "$REGISTRY_BASE" --agent-id "$AGENT_ID" --json
+```
+
+Practical interpretation:
+
+- If you meant to continue the same agent, update your local state process and use a higher
+  continuity sequence.
+- If you meant to create a brand-new agent, start over in a clean folder with
+  `iap-agent init --project-local ...` so you get a new keypair and new `agent_id`.
 
 If `CONT_STATUS` is already `CERTIFIED`, skip directly to step 6.
 Otherwise request payment handoff:

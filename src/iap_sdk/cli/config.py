@@ -10,6 +10,7 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path.home() / ".iap_agent" / "config.toml"
 DEFAULT_REGISTRY_BASE = "https://registry.ia-protocol.com"
 REGISTRY_BASE_ENV_VAR = "IAP_REGISTRY_BASE"
+REGISTRY_API_KEY_ENV_VAR = "IAP_REGISTRY_API_KEY"
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class CLIConfig:
     beta_mode: bool = True
     maturity_level: str = "beta"
     registry_base: str = DEFAULT_REGISTRY_BASE
+    registry_api_key: str | None = None
     agent_name: str = "Local Agent"
     amcs_db_path: str = "./amcs.db"
     sessions_dir: str = str(Path.home() / ".iap_agent" / "sessions")
@@ -79,10 +81,19 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         raise ConfigError("maturity_level must be one of: alpha, beta, stable")
 
     env_registry_base = os.getenv(REGISTRY_BASE_ENV_VAR)
+    env_registry_api_key = os.getenv(REGISTRY_API_KEY_ENV_VAR)
     configured_registry_base = str(source.get("registry_base", DEFAULT_REGISTRY_BASE)).strip()
     registry_base = env_registry_base.strip() if env_registry_base else configured_registry_base
     if not registry_base:
         raise ConfigError("registry_base must not be empty")
+
+    configured_registry_api_key_raw = source.get("registry_api_key")
+    if env_registry_api_key is not None:
+        registry_api_key = env_registry_api_key.strip() or None
+    elif configured_registry_api_key_raw is None:
+        registry_api_key = None
+    else:
+        registry_api_key = str(configured_registry_api_key_raw).strip() or None
 
     agent_name = str(source.get("agent_name", "Local Agent")).strip()
     if not agent_name:
@@ -106,6 +117,7 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         beta_mode=beta_mode,
         maturity_level=maturity_level,
         registry_base=registry_base,
+        registry_api_key=registry_api_key,
         agent_name=agent_name,
         amcs_db_path=amcs_db_path,
         sessions_dir=sessions_dir,
