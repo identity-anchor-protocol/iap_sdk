@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from iap_sdk.cli.config import load_cli_config
 
 
@@ -50,3 +52,22 @@ def test_env_registry_api_key_overrides_config_file(tmp_path, monkeypatch) -> No
     monkeypatch.setenv("IAP_REGISTRY_API_KEY", "from_env")
     config = load_cli_config(config_path)
     assert config.registry_api_key == "from_env"
+
+
+def test_config_schema_version_defaults_to_one(tmp_path) -> None:
+    config = load_cli_config(tmp_path / "missing.toml")
+    assert config.config_schema_version == 1
+
+
+def test_config_schema_version_parses_when_present(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("config_schema_version = 2\n", encoding="utf-8")
+    config = load_cli_config(config_path)
+    assert config.config_schema_version == 2
+
+
+def test_config_schema_version_rejects_invalid_values(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("config_schema_version = 0\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_cli_config(config_path)

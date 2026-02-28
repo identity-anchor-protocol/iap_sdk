@@ -114,6 +114,13 @@ iap-agent registry status --registry-base https://registry.ia-protocol.com --jso
 Use `--project-local` when you want a genuinely new agent. Use the global identity only when you
 intentionally want to continue the same agent across different folders.
 
+### Upgrade safety
+
+- `python -m pip install -U iap-agent` updates the SDK package only; it does not change `agent_id`.
+- `iap-agent upgrade status --json` checks the current identity path, local state sequence, and
+  registry capabilities before you request new certificates.
+- Routine software upgrades should normally continue with a new continuity event, not lineage.
+
 If a continuity request fails with:
 
 - `ledger_sequence must strictly increase; latest registry sequence is X`
@@ -151,6 +158,7 @@ See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 - `/docs/migration-cli-first.md`
 - `/docs/transition-terminology.md`
 - `/docs/final-live-test.md`
+- `/docs/upgrade-guide.md`
 - `/docs/security-assumptions.md`
 - `/examples/state-drift-demo/README.md`
 - `/RELEASE.md`

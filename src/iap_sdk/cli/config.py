@@ -15,6 +15,7 @@ REGISTRY_API_KEY_ENV_VAR = "IAP_REGISTRY_API_KEY"
 
 @dataclass(frozen=True)
 class CLIConfig:
+    config_schema_version: int = 1
     beta_mode: bool = True
     maturity_level: str = "beta"
     registry_base: str = DEFAULT_REGISTRY_BASE
@@ -61,6 +62,18 @@ def _to_bool(value: Any, field_name: str) -> bool:
     raise ConfigError(f"{field_name} must be a boolean")
 
 
+def _to_positive_int(value: Any, field_name: str, *, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be an integer") from exc
+    if parsed < 1:
+        raise ConfigError(f"{field_name} must be >= 1")
+    return parsed
+
+
 def load_cli_config(path: str | Path | None = None) -> CLIConfig:
     config_path = Path(path) if path else DEFAULT_CONFIG_PATH
     if not config_path.exists():
@@ -75,6 +88,11 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
     else:
         raise ConfigError("[cli] must be a table")
 
+    config_schema_version = _to_positive_int(
+        source.get("config_schema_version"),
+        "config_schema_version",
+        default=1,
+    )
     beta_mode = _to_bool(source.get("beta_mode", True), "beta_mode")
     maturity_level = str(source.get("maturity_level", "beta")).strip().lower()
     if maturity_level not in {"alpha", "beta", "stable"}:
@@ -114,6 +132,7 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         registry_public_key_b64 = str(registry_public_key_b64_raw).strip() or None
 
     return CLIConfig(
+        config_schema_version=config_schema_version,
         beta_mode=beta_mode,
         maturity_level=maturity_level,
         registry_base=registry_base,
