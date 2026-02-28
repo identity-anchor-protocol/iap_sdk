@@ -30,6 +30,22 @@ Set registry URL:
 export REGISTRY_BASE="https://registry.ia-protocol.com"
 ```
 
+Before you continue with an existing agent after any future SDK upgrade, run:
+
+```bash
+iap-agent upgrade status --registry-base "$REGISTRY_BASE" --json
+```
+
+This checks:
+
+- which identity file you are using
+- whether it is project-local or global
+- the local state sequence
+- the latest registry continuity sequence for this `agent_id`
+
+If the registry is ahead of local state, reconcile first instead of requesting a new certificate
+blindly.
+
 Optional: set your default agent display name once in config (used when `--agent-name` is omitted):
 
 ```bash
