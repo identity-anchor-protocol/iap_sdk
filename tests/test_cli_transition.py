@@ -34,6 +34,7 @@ def test_init_bootstraps_local_state_files(tmp_path) -> None:
         identity_path = tmp_path / ".iap_agent" / "identity" / "ed25519.json"
         rc = main(["init", "--identity-file", str(identity_path)], stdout=out, stderr=err)
         assert rc == 0
+        assert (tmp_path / ".iap" / "meta.json").exists()
         assert (tmp_path / ".iap" / "state" / "state_root.json").exists()
         assert (tmp_path / ".iap" / "state" / "agent_secret").exists()
         assert (tmp_path / "iap.yaml").exists()

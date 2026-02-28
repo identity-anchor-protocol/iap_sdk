@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+from pathlib import Path
 
 from iap_sdk.cli.main import main
 
@@ -354,6 +356,8 @@ def test_upgrade_status_reports_registry_capabilities_and_sequences(tmp_path, mo
     assert rc == 0
     payload = json.loads(out.getvalue())
     assert payload["config_schema_version"] == 2
+    assert payload["local_meta_schema_version"] == 1
+    assert payload["local_meta_detected_schema_version"] == 0
     assert payload["local_state_detected_schema_version"] == 1
     assert payload["identity_scope"] == "project-local"
     assert payload["latest_registry_sequence"] == 3
@@ -404,3 +408,19 @@ def test_upgrade_status_warns_when_global_identity_is_selected(tmp_path, monkeyp
     payload = json.loads(out.getvalue())
     assert payload["identity_scope"] == "global"
     assert any("current identity is global" in item for item in payload["warnings"])
+
+
+def test_init_json_includes_meta_file(tmp_path) -> None:
+    identity_path = tmp_path / "identity.json"
+    out = io.StringIO()
+    err = io.StringIO()
+    cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        rc = main(["init", "--identity-file", str(identity_path), "--json"], stdout=out, stderr=err)
+        assert rc == 0
+        payload = json.loads(out.getvalue())
+        assert payload["meta_schema_version"] == 1
+        assert payload["meta_file"] == str(tmp_path / ".iap" / "meta.json")
+    finally:
+        os.chdir(cwd)

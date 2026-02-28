@@ -60,3 +60,9 @@ Then, if your tracked state changed after the upgrade:
 1. append new state to AMCS
 2. compute the new `memory_root`
 3. request a new continuity certificate
+
+## Need help?
+
+For upgrade issues, unexpected identity reuse, or compatibility questions, contact:
+
+- `admin@iap-protocol.com`
