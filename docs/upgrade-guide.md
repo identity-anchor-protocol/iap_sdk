@@ -65,4 +65,4 @@ Then, if your tracked state changed after the upgrade:
 
 For upgrade issues, unexpected identity reuse, or compatibility questions, contact:
 
-- `admin@iap-protocol.com`
+- `admin@ia-protocol.com`

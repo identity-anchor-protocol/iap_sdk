@@ -40,4 +40,4 @@ This document captures the security baseline for `iap-agent` v0.1.x.
 
 For security-relevant concerns, upgrade failures, or suspicious verification behavior, contact:
 
-- `admin@iap-protocol.com`
+- `admin@ia-protocol.com`
