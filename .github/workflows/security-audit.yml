@@ -26,13 +26,13 @@ jobs:
       - name: Export runtime requirements
         run: |
           python - <<'PY' > requirements-runtime.txt
-from pathlib import Path
-import tomllib
+          from pathlib import Path
+          import tomllib
 
-data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-for dep in data["project"]["dependencies"]:
-    print(dep)
-PY
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          for dep in data["project"]["dependencies"]:
+              print(dep)
+          PY
 
       - name: Audit runtime dependencies
         run: pip-audit -r requirements-runtime.txt
