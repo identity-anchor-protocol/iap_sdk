@@ -15,6 +15,7 @@ python -m pip install -e ".[dev]"
 
 ```bash
 iap-agent init --project-local --show-public --json
+iap-agent upgrade status --registry-base https://registry.ia-protocol.com --json
 ```
 
 Use `--project-local` for a fresh agent. It creates a new identity in this folder instead of
