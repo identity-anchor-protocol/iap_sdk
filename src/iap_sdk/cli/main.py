@@ -19,7 +19,12 @@ from uuid import uuid4
 from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, append_files_to_amcs, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
-from iap_sdk.cli.identity import IdentityError, load_identity, load_or_create_identity
+from iap_sdk.cli.identity import (
+    DEFAULT_IDENTITY_PATH,
+    IdentityError,
+    load_identity,
+    load_or_create_identity,
+)
 from iap_sdk.cli.sessions import SessionError, save_session_record
 from iap_sdk.cli.tracking import (
     append_tracking_events,
@@ -44,6 +49,7 @@ EXIT_VALIDATION_ERROR = 1
 EXIT_NETWORK_ERROR = 2
 EXIT_TIMEOUT = 3
 EXIT_VERIFICATION_FAILED = 4
+LOCAL_STATE_SCHEMA_VERSION = 1
 
 _SENSITIVE_FIELDS = (
     "private_key_b64",
@@ -141,6 +147,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to local identity file when deriving agent_id fallback",
     )
     registry_status.add_argument("--json", action="store_true")
+
+    upgrade = sub.add_parser("upgrade", help="Inspect upgrade readiness and compatibility")
+    upgrade_sub = upgrade.add_subparsers(dest="upgrade_command", required=True)
+    upgrade_status = upgrade_sub.add_parser(
+        "status",
+        help="Show local identity context and registry capabilities before upgrading",
+    )
+    upgrade_status.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    upgrade_status.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file override",
+    )
+    upgrade_status.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
+    upgrade_status.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify continuity record offline")
     verify.add_argument("certificate_json")
@@ -527,6 +556,7 @@ def _run_init(*, args, stdout, stderr) -> int:
     state_root_path = state_dir / "state_root.json"
     if not state_root_path.exists():
         state_root_payload = {
+            "schema_version": LOCAL_STATE_SCHEMA_VERSION,
             "agent_id": identity.agent_id,
             "sequence": 0,
             "memory_root": None,
@@ -667,6 +697,80 @@ def _run_commit(*, args, config: CLIConfig, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _project_local_identity_path() -> Path:
+    return Path.cwd() / ".iap" / "identity" / "ed25519.json"
+
+
+def _resolve_upgrade_identity_path(args) -> Path:
+    if args.project_local and args.identity_file:
+        raise IdentityError("cannot use --project-local together with --identity-file")
+    if args.identity_file:
+        return Path(args.identity_file)
+    if args.project_local:
+        return _project_local_identity_path()
+    project_local = _project_local_identity_path()
+    if project_local.exists():
+        return project_local
+    return DEFAULT_IDENTITY_PATH
+
+
+def _classify_identity_scope(identity_path: Path) -> str:
+    resolved_identity = identity_path.expanduser().resolve(strict=False)
+    project_local = _project_local_identity_path().expanduser().resolve(strict=False)
+    global_path = DEFAULT_IDENTITY_PATH.expanduser().resolve(strict=False)
+    if resolved_identity == project_local:
+        return "project-local"
+    if resolved_identity == global_path:
+        return "global"
+    return "custom"
+
+
+def _parse_version_tuple(raw: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for piece in re.split(r"[.+-]", raw):
+        if not piece:
+            continue
+        if piece.isdigit():
+            parts.append(int(piece))
+            continue
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        if digits:
+            parts.append(int(digits))
+            break
+        break
+    return tuple(parts)
+
+
+def _read_local_state_summary() -> dict[str, object]:
+    state_root_path = Path.cwd() / ".iap" / "state" / "state_root.json"
+    if not state_root_path.exists():
+        return {
+            "state_root_file": str(state_root_path),
+            "exists": False,
+            "schema_version": 0,
+            "sequence": None,
+        }
+    try:
+        payload = json.loads(state_root_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "state_root_file": str(state_root_path),
+            "exists": True,
+            "schema_version": 0,
+            "sequence": None,
+        }
+    sequence = payload.get("sequence")
+    sequence_value = int(sequence) if isinstance(sequence, int) else None
+    schema_version = payload.get("schema_version")
+    schema_value = int(schema_version) if isinstance(schema_version, int) else 0
+    return {
+        "state_root_file": str(state_root_path),
+        "exists": True,
+        "schema_version": schema_value,
+        "sequence": sequence_value,
+    }
+
+
 def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     agent_id = args.agent_id
     if not agent_id:
@@ -710,6 +814,144 @@ def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     )
     print(f"latest_continuity_request_id: {payload['latest_continuity_request_id']}", file=stdout)
     print(f"latest_continuity_issued_at: {payload['latest_continuity_issued_at']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity_target = _resolve_upgrade_identity_path(args)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    identity = None
+    identity_path = identity_target
+    identity_scope = _classify_identity_scope(identity_target)
+    identity_error = None
+    try:
+        identity, identity_path = load_identity(identity_target)
+        identity_scope = _classify_identity_scope(identity_path)
+    except IdentityError as exc:
+        identity_error = str(exc)
+
+    registry_base = args.registry_base or config.registry_base
+    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+
+    registry_info = None
+    registry_error = None
+    try:
+        registry_info = client.get_registry_info()
+    except (RegistryRequestError, RegistryUnavailableError) as exc:
+        registry_error = str(exc)
+
+    agent_status = None
+    if identity is not None and registry_error is None:
+        try:
+            agent_status = client.get_agent_registry_status(identity.agent_id)
+        except (RegistryRequestError, RegistryUnavailableError) as exc:
+            registry_error = str(exc)
+
+    local_state = _read_local_state_summary()
+    warnings: list[str] = []
+    next_actions: list[str] = []
+
+    if identity_scope == "global":
+        warnings.append(
+            "current identity is global; if you expected a fresh agent for this project, use "
+            "`iap-agent init --project-local` before continuing"
+        )
+    if identity_error:
+        warnings.append("no usable local identity was found at the selected path")
+        next_actions.append(
+            "initialize or point to the correct identity before upgrade-sensitive operations"
+        )
+    if registry_info is not None:
+        recommended = str(registry_info.get("minimum_recommended_sdk_version", "")).strip()
+        if recommended:
+            if _parse_version_tuple(_sdk_version()) < _parse_version_tuple(recommended):
+                warnings.append(
+                    f"installed SDK {_sdk_version()} is older than the registry minimum "
+                    f"recommended version {recommended}"
+                )
+                next_actions.append("upgrade iap-agent before requesting new certificates")
+    if registry_error:
+        warnings.append(f"registry lookup unavailable: {registry_error}")
+        next_actions.append("retry with a reachable registry before upgrade-sensitive flows")
+
+    local_sequence = local_state.get("sequence")
+    latest_registry_sequence = (
+        agent_status.get("latest_continuity_sequence") if isinstance(agent_status, dict) else None
+    )
+    if isinstance(local_sequence, int) and isinstance(latest_registry_sequence, int):
+        if latest_registry_sequence > local_sequence:
+            warnings.append(
+                "registry continuity sequence is ahead of local state; local assumptions are stale"
+            )
+            next_actions.append(
+                "resume the same identity and continue from the registry sequence, or initialize "
+                "a new project-local identity if this should be a separate agent"
+            )
+
+    payload = {
+        "sdk_version": _sdk_version(),
+        "config_schema_version": config.config_schema_version,
+        "local_state_schema_version": LOCAL_STATE_SCHEMA_VERSION,
+        "registry_base": registry_base,
+        "identity_path": str(identity_path),
+        "identity_scope": identity_scope,
+        "agent_id": identity.agent_id if identity is not None else None,
+        "identity_error": identity_error,
+        "state_root_file": local_state["state_root_file"],
+        "local_state_exists": local_state["exists"],
+        "local_state_detected_schema_version": local_state["schema_version"],
+        "local_state_sequence": local_sequence,
+        "registry_version": registry_info.get("version") if registry_info else None,
+        "protocol_version": (
+            registry_info.get("protocol_version") if registry_info else PROTOCOL_VERSION
+        ),
+        "minimum_recommended_sdk_version": (
+            registry_info.get("minimum_recommended_sdk_version") if registry_info else None
+        ),
+        "supported_features": (
+            registry_info.get("supported_features") if registry_info else []
+        ),
+        "has_identity_anchor": agent_status.get("has_identity_anchor") if agent_status else None,
+        "latest_registry_sequence": latest_registry_sequence,
+        "latest_registry_memory_root": (
+            agent_status.get("latest_continuity_memory_root") if agent_status else None
+        ),
+        "warnings": warnings,
+        "next_actions": next_actions,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"sdk_version: {payload['sdk_version']}", file=stdout)
+    print(f"config_schema_version: {payload['config_schema_version']}", file=stdout)
+    print(f"local_state_schema_version: {payload['local_state_schema_version']}", file=stdout)
+    print(f"registry_base: {payload['registry_base']}", file=stdout)
+    print(f"identity_path: {payload['identity_path']}", file=stdout)
+    print(f"identity_scope: {payload['identity_scope']}", file=stdout)
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"local_state_sequence: {payload['local_state_sequence']}", file=stdout)
+    print(f"registry_version: {payload['registry_version']}", file=stdout)
+    print(f"protocol_version: {payload['protocol_version']}", file=stdout)
+    print(
+        "minimum_recommended_sdk_version: "
+        f"{payload['minimum_recommended_sdk_version']}",
+        file=stdout,
+    )
+    print(f"supported_features: {','.join(payload['supported_features'])}", file=stdout)
+    print(f"has_identity_anchor: {payload['has_identity_anchor']}", file=stdout)
+    print(f"latest_registry_sequence: {payload['latest_registry_sequence']}", file=stdout)
+    if warnings:
+        print("warnings:", file=stdout)
+        for warning in warnings:
+            print(f"- {warning}", file=stdout)
+    if next_actions:
+        print("next_actions:", file=stdout)
+        for action in next_actions:
+            print(f"- {action}", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -1606,6 +1848,11 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         if args.registry_command == "status":
             return _run_registry_status(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"registry {args.registry_command}", stdout=stdout)
+
+    if args.command == "upgrade":
+        if args.upgrade_command == "status":
+            return _run_upgrade_status(args=args, config=config, stdout=stdout, stderr=stderr)
+        return _coming_soon(path=f"upgrade {args.upgrade_command}", stdout=stdout)
 
     if args.command == "verify":
         return _run_verify(args=args, config=config, stdout=stdout, stderr=stderr)

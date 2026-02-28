@@ -137,6 +137,9 @@ class RegistryClient:
     def get_public_registry_key(self) -> dict:
         return self._request("GET", "/registry/public-key")
 
+    def get_registry_info(self) -> dict:
+        return self._request("GET", "/v1/registry/info")
+
     def get_agent_registry_status(self, agent_id: str) -> dict:
         return self._request("GET", f"/v1/registry/agents/{agent_id}/status")
 

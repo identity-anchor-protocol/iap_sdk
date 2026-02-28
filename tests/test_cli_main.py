@@ -294,3 +294,113 @@ def test_registry_status_passes_configured_api_key(tmp_path, monkeypatch) -> Non
         "base_url": "https://registry.ia-protocol.com",
         "api_key": "iap_live_test",
     }
+
+
+def test_upgrade_status_reports_registry_capabilities_and_sequences(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        'beta_mode = false\nconfig_schema_version = 2\nregistry_api_key = "iap_live_test"\n',
+        encoding="utf-8",
+    )
+    state_root = tmp_path / ".iap" / "state" / "state_root.json"
+    state_root.parent.mkdir(parents=True, exist_ok=True)
+    state_root.write_text(
+        json.dumps({"schema_version": 1, "sequence": 1}, sort_keys=True),
+        encoding="utf-8",
+    )
+    identity_path = tmp_path / ".iap" / "identity" / "ed25519.json"
+
+    class _Identity:
+        agent_id = "ed25519:test-upgrade"
+
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (_Identity(), identity_path),
+    )
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def get_registry_info(self) -> dict:
+            return {
+                "registry_id": "iap-registry-main",
+                "registry_public_key_fingerprint": "a" * 64,
+                "version": "0.2.0",
+                "protocol_version": "IAP-0.1",
+                "minimum_recommended_sdk_version": "9.9.9",
+                "supported_features": ["agent_status", "continuity", "identity_anchor"],
+            }
+
+        def get_agent_registry_status(self, agent_id: str) -> dict:
+            return {
+                "agent_id": agent_id,
+                "has_identity_anchor": True,
+                "latest_continuity_sequence": 3,
+                "latest_continuity_memory_root": "b" * 64,
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["--config", str(config_path), "upgrade", "status", "--project-local", "--json"],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["config_schema_version"] == 2
+    assert payload["local_state_detected_schema_version"] == 1
+    assert payload["identity_scope"] == "project-local"
+    assert payload["latest_registry_sequence"] == 3
+    assert any(
+        "registry continuity sequence is ahead of local state" in item
+        for item in payload["warnings"]
+    )
+    assert any("upgrade iap-agent" in item for item in payload["next_actions"])
+    assert err.getvalue() == ""
+
+
+def test_upgrade_status_warns_when_global_identity_is_selected(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("beta_mode = false\n", encoding="utf-8")
+
+    class _Identity:
+        agent_id = "ed25519:test-global"
+
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (_Identity(), path),
+    )
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def get_registry_info(self) -> dict:
+            return {
+                "registry_id": "iap-registry-main",
+                "registry_public_key_fingerprint": "a" * 64,
+                "version": "0.2.0",
+                "protocol_version": "IAP-0.1",
+                "minimum_recommended_sdk_version": "0.1.6",
+                "supported_features": [],
+            }
+
+        def get_agent_registry_status(self, agent_id: str) -> dict:
+            return {"agent_id": agent_id, "has_identity_anchor": False}
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(["--config", str(config_path), "upgrade", "status", "--json"], stdout=out, stderr=err)
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["identity_scope"] == "global"
+    assert any("current identity is global" in item for item in payload["warnings"])

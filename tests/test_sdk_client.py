@@ -48,3 +48,19 @@ def test_request_includes_api_key_header(monkeypatch) -> None:
 
     assert result == {"ok": True}
     assert captured["headers"] == {"x-iap-api-key": "iap_test_key"}
+
+
+def test_get_registry_info_uses_expected_path(monkeypatch) -> None:
+    client = RegistryClient(base_url="http://localhost:8080", timeout=0.1)
+    captured: list[str] = []
+
+    def fake_request(method, path, *, json_payload=None):  # noqa: ANN001
+        captured.append(f"{method} {path}")
+        return {"version": "0.2.0"}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    result = client.get_registry_info()
+
+    assert result == {"version": "0.2.0"}
+    assert captured == ["GET /v1/registry/info"]
