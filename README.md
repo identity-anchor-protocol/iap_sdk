@@ -119,6 +119,8 @@ intentionally want to continue the same agent across different folders.
 - `python -m pip install -U iap-agent` updates the SDK package only; it does not change `agent_id`.
 - `iap-agent upgrade status --json` checks the current identity path, local state sequence, and
   registry capabilities before you request new certificates.
+- `iap-agent upgrade migrate --json` previews safe local `.iap` metadata migrations; rerun with
+  `--apply` only when you want the SDK to normalize local metadata/schema markers.
 - Routine software upgrades should normally continue with a new continuity event, not lineage.
 
 If a continuity request fails with:

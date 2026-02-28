@@ -34,6 +34,7 @@ Before you continue with an existing agent after any future SDK upgrade, run:
 
 ```bash
 iap-agent upgrade status --registry-base "$REGISTRY_BASE" --json
+iap-agent upgrade migrate --json
 ```
 
 This checks:

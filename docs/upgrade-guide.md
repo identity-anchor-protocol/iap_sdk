@@ -34,6 +34,19 @@ Run this before requesting new certificates after a software update:
 iap-agent upgrade status --json
 ```
 
+If the SDK warns that local `.iap` metadata is older than the current expectation, inspect the
+safe local migration first:
+
+```bash
+iap-agent upgrade migrate --json
+```
+
+Then apply the non-destructive metadata/schema refresh:
+
+```bash
+iap-agent upgrade migrate --apply --json
+```
+
 This reports:
 
 - installed SDK version
@@ -52,6 +65,7 @@ agent.
 ```bash
 python -m pip install -U iap-agent
 iap-agent upgrade status --json
+iap-agent upgrade migrate --json
 iap-agent registry status --json
 ```
 

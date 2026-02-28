@@ -172,6 +172,27 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     upgrade_status.add_argument("--json", action="store_true")
 
+    upgrade_migrate = upgrade_sub.add_parser(
+        "migrate",
+        help="Inspect or apply safe local .iap metadata migrations",
+    )
+    upgrade_migrate.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file override",
+    )
+    upgrade_migrate.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
+    upgrade_migrate.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write safe local metadata/schema updates when needed",
+    )
+    upgrade_migrate.add_argument("--json", action="store_true")
+
     verify = sub.add_parser("verify", help="Verify continuity record offline")
     verify.add_argument("certificate_json")
     verify.add_argument("--registry-public-key-b64", default=None)
@@ -819,6 +840,88 @@ def _read_local_state_summary() -> dict[str, object]:
     }
 
 
+def _plan_local_migration(
+    *,
+    project_root: Path,
+    identity_path: Path,
+) -> tuple[dict[str, object], list[str]]:
+    meta_path = project_root / ".iap" / "meta.json"
+    state_root_path = project_root / ".iap" / "state" / "state_root.json"
+    actions: list[str] = []
+
+    meta_schema_version = 0
+    meta_identity_path = None
+    if meta_path.exists():
+        try:
+            meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta_payload = {}
+        schema_version = meta_payload.get("schema_version")
+        meta_schema_version = int(schema_version) if isinstance(schema_version, int) else 0
+        raw_identity_path = meta_payload.get("identity_path")
+        if isinstance(raw_identity_path, str) and raw_identity_path.strip():
+            meta_identity_path = raw_identity_path
+
+    normalized_identity_path = str(identity_path)
+    if (project_root / ".iap").exists() and (
+        not meta_path.exists()
+        or meta_schema_version < LOCAL_META_SCHEMA_VERSION
+        or meta_identity_path != normalized_identity_path
+    ):
+        actions.append("refresh_local_meta")
+
+    state_schema_version = 0
+    if state_root_path.exists():
+        try:
+            state_payload = json.loads(state_root_path.read_text(encoding="utf-8"))
+        except Exception:
+            state_payload = {}
+        schema_version = state_payload.get("schema_version")
+        state_schema_version = int(schema_version) if isinstance(schema_version, int) else 0
+        if state_schema_version < LOCAL_STATE_SCHEMA_VERSION:
+            actions.append("upgrade_state_root_schema")
+
+    summary = {
+        "project_root": str(project_root),
+        "identity_path": normalized_identity_path,
+        "meta_file": str(meta_path),
+        "meta_exists": meta_path.exists(),
+        "meta_schema_version": meta_schema_version,
+        "state_root_file": str(state_root_path),
+        "state_root_exists": state_root_path.exists(),
+        "state_root_schema_version": state_schema_version,
+    }
+    return summary, actions
+
+
+def _apply_local_migration(
+    *,
+    project_root: Path,
+    identity_path: Path,
+    actions: list[str],
+) -> list[str]:
+    applied: list[str] = []
+    if "refresh_local_meta" in actions:
+        _ensure_local_meta(project_root=project_root, identity_path=identity_path)
+        applied.append("refresh_local_meta")
+
+    state_root_path = project_root / ".iap" / "state" / "state_root.json"
+    if "upgrade_state_root_schema" in actions and state_root_path.exists():
+        try:
+            payload = json.loads(state_root_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        payload["schema_version"] = LOCAL_STATE_SCHEMA_VERSION
+        state_root_path.parent.mkdir(parents=True, exist_ok=True)
+        state_root_path.write_text(
+            json.dumps(payload, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        applied.append("upgrade_state_root_schema")
+
+    return applied
+
+
 def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     agent_id = args.agent_id
     if not agent_id:
@@ -1017,6 +1120,63 @@ def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
         print("next_actions:", file=stdout)
         for action in next_actions:
             print(f"- {action}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_upgrade_migrate(*, args, stdout, stderr) -> int:
+    try:
+        identity_path = _resolve_upgrade_identity_path(args)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    project_root = Path.cwd()
+    summary, actions = _plan_local_migration(project_root=project_root, identity_path=identity_path)
+    warnings: list[str] = []
+
+    if not actions:
+        warnings.append("no local migration changes are needed")
+    elif not args.apply:
+        warnings.append(
+            "dry run only; rerun with `iap-agent upgrade migrate --apply` to write changes"
+        )
+
+    applied: list[str] = []
+    if args.apply and actions:
+        applied = _apply_local_migration(
+            project_root=project_root,
+            identity_path=identity_path,
+            actions=actions,
+        )
+
+    payload = {
+        **summary,
+        "apply_requested": bool(args.apply),
+        "actions_pending": [] if args.apply else actions,
+        "actions_applied": applied,
+        "changed": bool(applied),
+        "warnings": warnings,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"project_root: {payload['project_root']}", file=stdout)
+    print(f"identity_path: {payload['identity_path']}", file=stdout)
+    print(f"meta_file: {payload['meta_file']}", file=stdout)
+    print(f"state_root_file: {payload['state_root_file']}", file=stdout)
+    print(f"changed: {payload['changed']}", file=stdout)
+    if payload["actions_pending"]:
+        print("actions_pending:", file=stdout)
+        for item in payload["actions_pending"]:
+            print(f"- {item}", file=stdout)
+    if payload["actions_applied"]:
+        print("actions_applied:", file=stdout)
+        for item in payload["actions_applied"]:
+            print(f"- {item}", file=stdout)
+    if warnings:
+        print("warnings:", file=stdout)
+        for item in warnings:
+            print(f"- {item}", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -1917,6 +2077,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "upgrade":
         if args.upgrade_command == "status":
             return _run_upgrade_status(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.upgrade_command == "migrate":
+            return _run_upgrade_migrate(args=args, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"upgrade {args.upgrade_command}", stdout=stdout)
 
     if args.command == "verify":

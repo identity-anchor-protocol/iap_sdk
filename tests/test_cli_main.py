@@ -424,3 +424,51 @@ def test_init_json_includes_meta_file(tmp_path) -> None:
         assert payload["meta_file"] == str(tmp_path / ".iap" / "meta.json")
     finally:
         os.chdir(cwd)
+
+
+def test_upgrade_migrate_reports_pending_actions_without_writing(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    state_root = tmp_path / ".iap" / "state" / "state_root.json"
+    state_root.parent.mkdir(parents=True, exist_ok=True)
+    state_root.write_text(json.dumps({"sequence": 2}, sort_keys=True), encoding="utf-8")
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(["upgrade", "migrate", "--project-local", "--json"], stdout=out, stderr=err)
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["changed"] is False
+    assert payload["actions_applied"] == []
+    assert "refresh_local_meta" in payload["actions_pending"]
+    assert "upgrade_state_root_schema" in payload["actions_pending"]
+    assert any("dry run only" in item for item in payload["warnings"])
+    assert not (tmp_path / ".iap" / "meta.json").exists()
+
+
+def test_upgrade_migrate_apply_normalizes_meta_and_state_schema(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    state_root = tmp_path / ".iap" / "state" / "state_root.json"
+    state_root.parent.mkdir(parents=True, exist_ok=True)
+    state_root.write_text(json.dumps({"sequence": 4}, sort_keys=True), encoding="utf-8")
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["upgrade", "migrate", "--project-local", "--apply", "--json"],
+        stdout=out,
+        stderr=err,
+    )
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["changed"] is True
+    assert payload["actions_pending"] == []
+    assert "refresh_local_meta" in payload["actions_applied"]
+    assert "upgrade_state_root_schema" in payload["actions_applied"]
+
+    meta_payload = json.loads((tmp_path / ".iap" / "meta.json").read_text(encoding="utf-8"))
+    assert meta_payload["schema_version"] == 1
+    assert meta_payload["identity_path"] == str(tmp_path / ".iap" / "identity" / "ed25519.json")
+
+    state_payload = json.loads(state_root.read_text(encoding="utf-8"))
+    assert state_payload["schema_version"] == 1
+    assert state_payload["sequence"] == 4
