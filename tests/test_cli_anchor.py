@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption,
 
 from iap_sdk.cli.identity import IdentityError
 from iap_sdk.cli.main import main
-from iap_sdk.errors import RegistryUnavailableError
+from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError
 
 
 class _Identity:
@@ -189,3 +189,55 @@ def test_anchor_cert_writes_bundle(monkeypatch, tmp_path) -> None:
     payload = json.loads(out.getvalue())
     assert payload["certificate_type"] == "IAP-Identity-0.1"
     assert output_file.exists()
+
+
+def test_anchor_issue_invalid_api_key_has_actionable_error(monkeypatch) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 401 invalid api key",
+                status_code=401,
+                detail="invalid api key",
+                error_code="unauthorized",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(["anchor", "issue"], stdout=out, stderr=err)
+    assert rc == 2
+    assert "invalid registry API key" in err.getvalue()
+
+
+def test_anchor_issue_api_key_quota_exceeded_has_actionable_error(monkeypatch) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 429 api key quota exceeded",
+                status_code=429,
+                detail="api key quota exceeded",
+                error_code="rate_limited",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(["anchor", "issue"], stdout=out, stderr=err)
+    assert rc == 2
+    assert "quota exceeded for this billing window" in err.getvalue()

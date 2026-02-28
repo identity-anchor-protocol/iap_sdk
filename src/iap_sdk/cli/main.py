@@ -436,6 +436,30 @@ def _print_error(stderr, prefix: str, message: str, *, code: int) -> int:
     return code
 
 
+def _print_registry_request_error(stderr, exc: RegistryRequestError, *, code: int) -> int:
+    if exc.status_code == 401 and exc.detail == "invalid api key":
+        return _print_error(
+            stderr,
+            "registry error",
+            (
+                "invalid registry API key. Update `IAP_REGISTRY_API_KEY` or the "
+                "`registry_api_key` value in your config, or remove it to use the payment flow."
+            ),
+            code=code,
+        )
+    if exc.status_code == 429 and exc.detail == "api key quota exceeded":
+        return _print_error(
+            stderr,
+            "registry error",
+            (
+                "registry API key quota exceeded for this billing window. Use a different API key, "
+                "wait for quota reset, or retry without the API key to use the payment flow."
+            ),
+            code=code,
+        )
+    return _print_error(stderr, "registry error", str(exc), code=code)
+
+
 def _run_version(*, config: CLIConfig, as_json: bool, stdout) -> int:
     payload = {
         "cli": "iap-agent",
@@ -809,6 +833,8 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     try:
         response = client.submit_identity_anchor(payload)
+    except RegistryRequestError as exc:
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
     except RegistryUnavailableError as exc:
         return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 
@@ -1102,7 +1128,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
                 ),
                 code=EXIT_NETWORK_ERROR,
             )
-        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
     except RegistryUnavailableError as exc:
         return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
 

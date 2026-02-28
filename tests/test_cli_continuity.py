@@ -196,3 +196,55 @@ def test_continuity_request_sequence_conflict_shows_actionable_hint(monkeypatch,
     assert "registry error:" in message
     assert "latest registry sequence is 4" in message
     assert "iap-agent registry status" in message
+
+
+def test_continuity_request_invalid_api_key_has_actionable_error(monkeypatch, tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    identity = _identity()
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (identity, Path(path or "id")),
+    )
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.get_amcs_root",
+        lambda *, amcs_db_path, agent_id: AMCSRootResult(
+            agent_id=agent_id,
+            amcs_db_path=amcs_db_path,
+            memory_root="b" * 64,
+            sequence=1,
+        ),
+    )
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 401 invalid api key",
+                status_code=401,
+                detail="invalid api key",
+                error_code="unauthorized",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "continuity",
+            "request",
+            "--registry-base",
+            "http://registry.local",
+            "--sessions-dir",
+            str(tmp_path / "sessions"),
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 2
+    assert out.getvalue() == ""
+    assert "invalid registry API key" in err.getvalue()
