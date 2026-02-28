@@ -146,6 +146,12 @@ continuity sequence is.
 
 See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 
+## Support / Feedback
+
+If you hit a bug, an upgrade issue, or have recommendations for improvement, contact:
+
+- `admin@iap-protocol.com`
+
 ## Docs
 
 - `/docs/quickstart-first-certificate.md`

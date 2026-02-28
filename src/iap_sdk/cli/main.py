@@ -50,6 +50,7 @@ EXIT_NETWORK_ERROR = 2
 EXIT_TIMEOUT = 3
 EXIT_VERIFICATION_FAILED = 4
 LOCAL_STATE_SCHEMA_VERSION = 1
+LOCAL_META_SCHEMA_VERSION = 1
 
 _SENSITIVE_FIELDS = (
     "private_key_b64",
@@ -535,16 +536,23 @@ def _run_init(*, args, stdout, stderr) -> int:
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
+    project_root = Path.cwd()
+    meta_path, meta_schema_version = _ensure_local_meta(
+        project_root=project_root,
+        identity_path=identity_path,
+    )
+
     payload = {
         "identity_path": str(identity_path),
         "created": created,
         "agent_id": identity.agent_id,
         "public_key_b64": identity.public_key_b64,
+        "meta_file": str(meta_path),
+        "meta_schema_version": meta_schema_version,
     }
     if args.export_private_key:
         payload["private_key_b64"] = identity.private_key_b64
 
-    project_root = Path.cwd()
     state_dir = project_root / ".iap" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     secret_path = state_dir / "agent_secret"
@@ -584,6 +592,7 @@ def _run_init(*, args, stdout, stderr) -> int:
     print(f"created: {str(payload['created']).lower()}", file=stdout)
     print(f"agent_id: {payload['agent_id']}", file=stdout)
     print(f"public_key_b64: {payload['public_key_b64']}", file=stdout)
+    print(f"meta_file: {payload['meta_file']}", file=stdout)
     print(f"state_dir: {state_dir}", file=stdout)
     print(f"state_root_file: {state_root_path}", file=stdout)
     print(f"tracking_config_file: {tracking_config_path}", file=stdout)
@@ -741,10 +750,43 @@ def _parse_version_tuple(raw: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def _ensure_local_meta(*, project_root: Path, identity_path: Path) -> tuple[Path, int]:
+    meta_path = project_root / ".iap" / "meta.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        schema_version = payload.get("schema_version")
+        if isinstance(schema_version, int) and schema_version >= 1:
+            return meta_path, schema_version
+    payload = {
+        "schema_version": LOCAL_META_SCHEMA_VERSION,
+        "identity_path": str(identity_path),
+        "updated_at": _utc_now_iso(),
+    }
+    meta_path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return meta_path, LOCAL_META_SCHEMA_VERSION
+
+
 def _read_local_state_summary() -> dict[str, object]:
     state_root_path = Path.cwd() / ".iap" / "state" / "state_root.json"
+    meta_path = Path.cwd() / ".iap" / "meta.json"
+    meta_exists = meta_path.exists()
+    meta_schema_version = 0
+    if meta_exists:
+        try:
+            meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta_payload = {}
+        schema_version = meta_payload.get("schema_version")
+        meta_schema_version = int(schema_version) if isinstance(schema_version, int) else 0
     if not state_root_path.exists():
         return {
+            "meta_file": str(meta_path),
+            "meta_exists": meta_exists,
+            "meta_schema_version": meta_schema_version,
             "state_root_file": str(state_root_path),
             "exists": False,
             "schema_version": 0,
@@ -754,6 +796,9 @@ def _read_local_state_summary() -> dict[str, object]:
         payload = json.loads(state_root_path.read_text(encoding="utf-8"))
     except Exception:
         return {
+            "meta_file": str(meta_path),
+            "meta_exists": meta_exists,
+            "meta_schema_version": meta_schema_version,
             "state_root_file": str(state_root_path),
             "exists": True,
             "schema_version": 0,
@@ -764,6 +809,9 @@ def _read_local_state_summary() -> dict[str, object]:
     schema_version = payload.get("schema_version")
     schema_value = int(schema_version) if isinstance(schema_version, int) else 0
     return {
+        "meta_file": str(meta_path),
+        "meta_exists": meta_exists,
+        "meta_schema_version": meta_schema_version,
         "state_root_file": str(state_root_path),
         "exists": True,
         "schema_version": schema_value,
@@ -864,6 +912,12 @@ def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
         next_actions.append(
             "initialize or point to the correct identity before upgrade-sensitive operations"
         )
+    if int(local_state.get("meta_schema_version", 0)) < LOCAL_META_SCHEMA_VERSION:
+        warnings.append(
+            "local .iap metadata is older than the current SDK expectation; recreate project "
+            "metadata with `iap-agent init --project-local` in this folder before future layout "
+            "changes ship"
+        )
     if registry_info is not None:
         recommended = str(registry_info.get("minimum_recommended_sdk_version", "")).strip()
         if recommended:
@@ -895,11 +949,15 @@ def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
         "sdk_version": _sdk_version(),
         "config_schema_version": config.config_schema_version,
         "local_state_schema_version": LOCAL_STATE_SCHEMA_VERSION,
+        "local_meta_schema_version": LOCAL_META_SCHEMA_VERSION,
         "registry_base": registry_base,
         "identity_path": str(identity_path),
         "identity_scope": identity_scope,
         "agent_id": identity.agent_id if identity is not None else None,
         "identity_error": identity_error,
+        "local_meta_file": local_state["meta_file"],
+        "local_meta_exists": local_state["meta_exists"],
+        "local_meta_detected_schema_version": local_state["meta_schema_version"],
         "state_root_file": local_state["state_root_file"],
         "local_state_exists": local_state["exists"],
         "local_state_detected_schema_version": local_state["schema_version"],
@@ -928,10 +986,17 @@ def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     print(f"sdk_version: {payload['sdk_version']}", file=stdout)
     print(f"config_schema_version: {payload['config_schema_version']}", file=stdout)
+    print(f"local_meta_schema_version: {payload['local_meta_schema_version']}", file=stdout)
     print(f"local_state_schema_version: {payload['local_state_schema_version']}", file=stdout)
     print(f"registry_base: {payload['registry_base']}", file=stdout)
     print(f"identity_path: {payload['identity_path']}", file=stdout)
     print(f"identity_scope: {payload['identity_scope']}", file=stdout)
+    print(f"local_meta_file: {payload['local_meta_file']}", file=stdout)
+    print(
+        "local_meta_detected_schema_version: "
+        f"{payload['local_meta_detected_schema_version']}",
+        file=stdout,
+    )
     print(f"agent_id: {payload['agent_id']}", file=stdout)
     print(f"local_state_sequence: {payload['local_state_sequence']}", file=stdout)
     print(f"registry_version: {payload['registry_version']}", file=stdout)

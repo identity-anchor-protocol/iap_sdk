@@ -35,3 +35,9 @@ This document captures the security baseline for `iap-agent` v0.1.x.
 - CI runs `pip-audit` against runtime dependencies declared in `pyproject.toml`.
 - Findings must be reviewed before release.
 - If a dependency issue is accepted temporarily, record the rationale in the release notes.
+
+## Reporting issues
+
+For security-relevant concerns, upgrade failures, or suspicious verification behavior, contact:
+
+- `admin@iap-protocol.com`
