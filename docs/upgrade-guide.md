@@ -69,6 +69,17 @@ iap-agent upgrade migrate --json
 iap-agent registry status --json
 ```
 
+## Certificate version naming
+
+The current beta deployment intentionally uses two version labels:
+
+- `certificate_version` stays frozen at `IAP-0.1`
+- continuity `certificate_type` stays `IAP-Continuity-0.2`
+
+That continuity subtype is a compatibility identifier, not a separate protocol
+line. Identity, continuity, lineage, and key rotation all still belong to the
+same `IAP-0.1` protocol family.
+
 If your operator gave you an account token for self-service quota checks, you can also inspect your
 remaining allowance directly:
 
