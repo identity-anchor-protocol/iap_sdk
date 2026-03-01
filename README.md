@@ -208,6 +208,12 @@ iap-agent registry set-base --base "https://registry.ia-protocol.com"
 iap-agent registry set-api-key --api-key "iapk_live_optional"
 ```
 
+Before issuing requests, you can run a read-only preflight:
+
+```bash
+iap-agent registry check --json
+```
+
 To bootstrap just the account token without editing TOML manually:
 
 ```bash

@@ -367,6 +367,140 @@ def test_registry_set_api_key_stores_and_clears_value(tmp_path) -> None:
     assert "beta mode" in err.getvalue()
 
 
+def test_registry_check_reports_reachability_and_entitlements(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            'beta_mode = false\n'
+            'registry_api_key = "iapk_live_test"\n'
+            'account_token = "iapt_live_test"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    class _Identity:
+        agent_id = "ed25519:test-agent"
+
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (_Identity(), Path(path or "id")),
+    )
+
+    class _Client:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            self.account_token = account_token
+
+        def get_registry_info(self) -> dict:
+            return {
+                "version": "0.2.0",
+                "minimum_recommended_sdk_version": "0.1.6",
+                "supported_features": ["account_tier_enforcement", "account_tokens"],
+            }
+
+        def get_agent_registry_status(self, agent_id: str) -> dict:
+            return {
+                "agent_id": agent_id,
+                "has_identity_anchor": True,
+                "latest_continuity_sequence": 4,
+            }
+
+        def get_account_usage(self) -> dict:
+            return {
+                "linked_key_count": 1,
+                "effective_remaining_identity_anchor": 1,
+                "effective_remaining_continuity": 8,
+                "effective_remaining_lineage": 0,
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(["--config", str(config_path), "registry", "check", "--json"], stdout=out, stderr=err)
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["registry_reachable"] is True
+    assert payload["registry_api_key_configured"] is True
+    assert payload["account_token_valid"] is True
+    assert payload["has_identity_anchor"] is True
+    assert payload["latest_continuity_sequence"] == 4
+    assert payload["effective_remaining_continuity"] == 8
+    assert err.getvalue() == ""
+
+
+def test_registry_check_warns_when_account_token_is_invalid(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        'beta_mode = false\naccount_token = "bad_token"\n',
+        encoding="utf-8",
+    )
+
+    class _Identity:
+        agent_id = "ed25519:test-agent"
+
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (_Identity(), Path(path or "id")),
+    )
+
+    class _Client:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            self.account_token = account_token
+
+        def get_registry_info(self) -> dict:
+            return {
+                "version": "0.2.0",
+                "minimum_recommended_sdk_version": "0.1.6",
+                "supported_features": [],
+            }
+
+        def get_agent_registry_status(self, agent_id: str) -> dict:
+            return {
+                "agent_id": agent_id,
+                "has_identity_anchor": False,
+                "latest_continuity_sequence": None,
+            }
+
+        def get_account_usage(self) -> dict:
+            raise RegistryRequestError(
+                "registry request failed: 401 invalid account token",
+                status_code=401,
+                detail="invalid account token",
+                error_code="invalid_account_token",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(["--config", str(config_path), "registry", "check", "--json"], stdout=out, stderr=err)
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["registry_reachable"] is True
+    assert payload["account_token_valid"] is False
+    assert any("account token check failed" in item for item in payload["warnings"])
+    assert any("refresh the account token" in item for item in payload["next_actions"])
+    assert err.getvalue() == ""
+
+
 def test_account_usage_passes_account_token_and_renders_json(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
