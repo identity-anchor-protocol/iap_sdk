@@ -148,6 +148,13 @@ continuity sequence is.
 
 See `/COMPATIBILITY.md` for pinned SDK/protocol/registry API assumptions.
 
+For the deployed beta line, the protocol-level certificate version remains
+`IAP-0.1`, while the continuity certificate subtype remains
+`IAP-Continuity-0.2` for backward compatibility with the existing issued
+certificate chain and verification vectors. This is intentional. It does not
+mean continuity is on a different protocol generation than identity, lineage,
+or key rotation.
+
 ## Support / Feedback
 
 If you hit a bug, an upgrade issue, or have recommendations for improvement, contact:
