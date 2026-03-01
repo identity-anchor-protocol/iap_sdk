@@ -240,6 +240,13 @@ With an account token configured, you can inspect your current quota usage:
 iap-agent account usage --json
 ```
 
+If you are the operator handing off bootstrap instructions to a user, you can generate the exact
+copy/paste commands:
+
+```bash
+iap-agent account handoff --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --json
+```
+
 The CLI also writes the latest successful account usage response to:
 
 - `<sessions_dir>/account_usage_last.json`

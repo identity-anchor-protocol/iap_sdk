@@ -460,6 +460,67 @@ def test_setup_requires_at_least_one_action(tmp_path) -> None:
     assert "no setup action requested" in err.getvalue()
 
 
+def test_account_handoff_renders_setup_and_usage_commands(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            'beta_mode = false\n'
+            'registry_base = "https://registry.example"\n'
+            'registry_api_key = "iapk_live_test"\n'
+            'account_token = "iapt_live_test"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["--config", str(config_path), "account", "handoff", "--json"],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["includes_registry_api_key"] is True
+    assert payload["includes_account_token"] is True
+    assert payload["commands"][0].startswith("iap-agent setup --registry-base ")
+    assert '--registry-api-key "iapk_live_test"' in payload["commands"][0]
+    assert '--account-token "iapt_live_test"' in payload["commands"][0]
+    assert payload["commands"][1] == "iap-agent account usage --json"
+    assert err.getvalue() == ""
+
+
+def test_account_handoff_omits_usage_without_account_token(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('beta_mode = false\n', encoding="utf-8")
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "handoff",
+            "--registry-base",
+            "https://registry.example",
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["includes_registry_api_key"] is False
+    assert payload["includes_account_token"] is False
+    assert payload["commands"] == [
+        'iap-agent setup --registry-base "https://registry.example" --check --json'
+    ]
+    assert err.getvalue() == ""
+
+
 def test_registry_check_reports_reachability_and_entitlements(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

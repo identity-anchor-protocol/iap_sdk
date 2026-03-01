@@ -86,6 +86,12 @@ Or do the same bootstrap in one command:
 iap-agent setup --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --check --json
 ```
 
+If you are preparing a user handoff, generate the exact command block you want them to paste:
+
+```bash
+iap-agent account handoff --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --json
+```
+
 Environment overrides still work if you need a temporary shell-specific value:
 
 ```bash

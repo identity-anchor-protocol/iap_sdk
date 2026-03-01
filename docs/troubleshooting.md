@@ -72,6 +72,12 @@ If the CLI says the token is invalid, request a fresh account token from your op
 the latest account usage snapshot is also written locally under your configured `sessions_dir` as
 `account_usage_last.json`.
 
+If you are the operator and want to resend a known-good bootstrap block, generate it directly:
+
+```bash
+iap-agent account handoff --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --json
+```
+
 ## `account tier quota exceeded`
 
 This means the API key itself may still be valid, but the linked account has reached its monthly
