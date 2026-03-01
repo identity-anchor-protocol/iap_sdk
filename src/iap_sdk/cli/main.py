@@ -626,6 +626,71 @@ def _print_error(stderr, prefix: str, message: str, *, code: int) -> int:
     return code
 
 
+def _format_account_tier_quota_message(detail: object) -> str:
+    if not isinstance(detail, dict):
+        return (
+            "the linked account has reached its monthly tier limit. Ask your operator to "
+            "increase the account quota, use a different entitled account, or retry without "
+            "the API key to use the payment flow."
+        )
+    if str(detail.get("message", "")).strip().lower() != "account tier quota exceeded":
+        return (
+            "the linked account has reached its monthly tier limit. Ask your operator to "
+            "increase the account quota, use a different entitled account, or retry without "
+            "the API key to use the payment flow."
+        )
+
+    certificate_type = str(detail.get("certificate_type") or "certificate")
+    plan = detail.get("plan") if isinstance(detail.get("plan"), dict) else {}
+    plan_label = str(plan.get("label") or "current")
+    limit = plan.get("limit")
+    used = plan.get("used")
+
+    lines = [
+        (
+            f"Your {plan_label} plan includes {limit} {certificate_type} certificates per month. "
+            f"You have used all {used}."
+        )
+        if limit is not None and used is not None
+        else (
+            f"Your {plan_label} plan has reached its {certificate_type} quota for this billing "
+            "window."
+        ),
+        "Choose a plan or add-on to continue.",
+    ]
+
+    upgrade_options = detail.get("upgrade_options")
+    if isinstance(upgrade_options, list):
+        for option in upgrade_options:
+            if not isinstance(option, dict):
+                continue
+            if option.get("type") == "plan":
+                label = str(option.get("label") or option.get("plan_id") or "Plan")
+                lines.append(
+                    (
+                        f"- {label}: "
+                        f"{int(option.get('monthly_identity_anchor_quota', 0))}/"
+                        f"{int(option.get('monthly_continuity_quota', 0))}/"
+                        f"{int(option.get('monthly_lineage_quota', 0))} "
+                        "(identity anchor / continuity / lineage)"
+                    )
+                )
+            elif option.get("type") == "addon":
+                label = str(option.get("label") or option.get("addon_id") or "Add-on")
+                quota_increment = option.get("quota_increment")
+                option_cert = str(option.get("certificate_type") or certificate_type)
+                if quota_increment is not None:
+                    lines.append(f"- {label}: +{quota_increment} {option_cert}")
+                else:
+                    lines.append(f"- {label}")
+
+    lines.append(
+        "Ask your operator to assign one of these options, use a different entitled account, "
+        "or retry without the API key to use the payment flow."
+    )
+    return "\n".join(lines)
+
+
 def _print_registry_request_error(stderr, exc: RegistryRequestError, *, code: int) -> int:
     if exc.status_code == 401 and exc.detail == "invalid api key":
         return _print_error(
@@ -657,15 +722,17 @@ def _print_registry_request_error(stderr, exc: RegistryRequestError, *, code: in
             ),
             code=code,
         )
-    if exc.status_code == 429 and exc.detail == "account tier quota exceeded":
+    if exc.status_code == 429 and (
+        exc.detail == "account tier quota exceeded"
+        or (
+            isinstance(exc.detail, dict)
+            and str(exc.detail.get("message", "")).strip().lower() == "account tier quota exceeded"
+        )
+    ):
         return _print_error(
             stderr,
             "registry error",
-            (
-                "the linked account has reached its monthly tier limit. Ask your operator to "
-                "increase the account quota, use a different entitled account, or retry without "
-                "the API key to use the payment flow."
-            ),
+            _format_account_tier_quota_message(exc.detail),
             code=code,
         )
     return _print_error(stderr, "registry error", str(exc), code=code)

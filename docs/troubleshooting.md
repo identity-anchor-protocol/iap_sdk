@@ -87,6 +87,12 @@ tier cap. You have three options:
 - switch to a different account/API key with remaining entitlement
 - retry without `IAP_REGISTRY_API_KEY` so the request uses the payment flow instead
 
+If the registry is on the newer plan/add-on model, the CLI now also prints:
+
+- the exhausted certificate type
+- the current plan limit and used count
+- available plan and add-on options the operator can assign next
+
 ## request remains `WAITING_PAYMENT`
 
 - verify payment actually completed in provider dashboard
