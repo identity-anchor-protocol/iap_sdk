@@ -9,12 +9,14 @@ from dataclasses import dataclass
 from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
 
 REGISTRY_API_KEY_ENV_VAR = "IAP_REGISTRY_API_KEY"
+ACCOUNT_TOKEN_ENV_VAR = "IAP_ACCOUNT_TOKEN"
 
 
 @dataclass
 class RegistryClient:
     base_url: str
     api_key: str | None = None
+    account_token: str | None = None
     timeout: float = 10.0
     retries: int = 2
 
@@ -44,18 +46,30 @@ class RegistryClient:
         if self.api_key is None:
             env_api_key = os.getenv(REGISTRY_API_KEY_ENV_VAR)
             self.api_key = env_api_key.strip() or None if env_api_key else None
+        if self.account_token is None:
+            env_account_token = os.getenv(ACCOUNT_TOKEN_ENV_VAR)
+            self.account_token = env_account_token.strip() or None if env_account_token else None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
 
-    def _request(self, method: str, path: str, *, json_payload: dict | None = None) -> dict:
-        headers = {"x-iap-api-key": self.api_key} if self.api_key else None
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_payload: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        request_headers = dict(headers or {})
+        if self.api_key and "x-iap-api-key" not in request_headers:
+            request_headers["x-iap-api-key"] = self.api_key
         try:
             response = self._session.request(
                 method,
                 self._url(path),
                 json=json_payload,
-                headers=headers,
+                headers=request_headers or None,
                 timeout=self.timeout,
             )
         except Exception as exc:  # pragma: no cover
@@ -142,6 +156,10 @@ class RegistryClient:
 
     def get_agent_registry_status(self, agent_id: str) -> dict:
         return self._request("GET", f"/v1/registry/agents/{agent_id}/status")
+
+    def get_account_usage(self) -> dict:
+        headers = {"x-iap-account-token": self.account_token} if self.account_token else None
+        return self._request("GET", "/v1/account/me/usage", headers=headers)
 
     def wait_for_certification(
         self,

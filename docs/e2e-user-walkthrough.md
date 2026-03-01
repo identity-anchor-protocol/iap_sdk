@@ -57,6 +57,16 @@ agent_name = "Atlas"
 EOF
 ```
 
+If your operator provided an account token, add it to the same config so you can inspect your
+remaining quota without contacting support:
+
+```bash
+cat >> ~/.iap_agent/config.toml <<'EOF'
+account_token = "iapt_live_optional"
+EOF
+iap-agent account usage --registry-base "$REGISTRY_BASE" --json
+```
+
 ## 1) Create your local agent identity
 
 Recommended for a fresh agent project: create a project-local identity so this folder gets its own
@@ -111,6 +121,13 @@ Payment provider options:
 - `--payment-provider auto`: try Stripe first, then Lightning fallback.
 - `--payment-provider stripe`: force Stripe checkout.
 - `--payment-provider lightning-btc`: force Lightning invoice flow.
+
+If you use an account token / quota plan, you can check whether you still have included allowance
+before starting another paid handoff:
+
+```bash
+iap-agent account usage --registry-base "$REGISTRY_BASE" --json
+```
 
 
 Example with auto handoff (Stripe first, Lightning fallback):
