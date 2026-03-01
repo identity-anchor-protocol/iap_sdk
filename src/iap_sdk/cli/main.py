@@ -149,6 +149,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     registry_status.add_argument("--json", action="store_true")
 
+    account = sub.add_parser("account", help="Inspect account-scoped quota and usage")
+    account_sub = account.add_subparsers(dest="account_command", required=True)
+    account_usage = account_sub.add_parser(
+        "usage", help="Show usage for the configured account token"
+    )
+    account_usage.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    account_usage.add_argument("--json", action="store_true")
+
     upgrade = sub.add_parser("upgrade", help="Inspect upgrade readiness and compatibility")
     upgrade_sub = upgrade.add_subparsers(dest="upgrade_command", required=True)
     upgrade_status = upgrade_sub.add_parser(
@@ -922,6 +934,26 @@ def _apply_local_migration(
     return applied
 
 
+def _build_registry_client(*, registry_base: str, config: CLIConfig) -> RegistryClient:
+    kwargs = {
+        "base_url": registry_base,
+        "api_key": config.registry_api_key,
+    }
+    if config.account_token:
+        kwargs["account_token"] = config.account_token
+    return RegistryClient(**kwargs)
+
+
+def _write_account_usage_snapshot(*, config: CLIConfig, payload: dict) -> Path:
+    snapshot_path = Path(config.sessions_dir) / "account_usage_last.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(
+        json.dumps(payload, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return snapshot_path
+
+
 def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     agent_id = args.agent_id
     if not agent_id:
@@ -932,7 +964,7 @@ def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
             return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
     try:
         status = client.get_agent_registry_status(agent_id)
     except RegistryUnavailableError as exc:
@@ -968,6 +1000,90 @@ def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _run_account_usage(*, args, config: CLIConfig, stdout, stderr) -> int:
+    if not config.account_token:
+        return _print_error(
+            stderr,
+            "account error",
+            (
+                "missing account token; set cli.account_token in config or export "
+                "IAP_ACCOUNT_TOKEN before using account commands"
+            ),
+            code=EXIT_VALIDATION_ERROR,
+        )
+
+    registry_base = args.registry_base or config.registry_base
+    client = _build_registry_client(registry_base=registry_base, config=config)
+    try:
+        usage = client.get_account_usage()
+    except RegistryRequestError as exc:
+        detail_text = exc.detail if isinstance(exc.detail, str) else ""
+        if exc.status_code == 401 and "account token" in detail_text.lower():
+            return _print_error(
+                stderr,
+                "account error",
+                (
+                    f"{detail_text}. Update cli.account_token / IAP_ACCOUNT_TOKEN, or ask "
+                    "your operator to issue a fresh account token."
+                ),
+                code=EXIT_NETWORK_ERROR,
+            )
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    payload = {
+        "registry_base": registry_base,
+        "account": usage.get("account"),
+        "linked_key_count": usage.get("linked_key_count"),
+        "quota_periods": usage.get("quota_periods"),
+        "total_monthly_identity_anchor_quota": usage.get("total_monthly_identity_anchor_quota"),
+        "total_monthly_continuity_quota": usage.get("total_monthly_continuity_quota"),
+        "total_monthly_lineage_quota": usage.get("total_monthly_lineage_quota"),
+        "total_used_identity_anchor": usage.get("total_used_identity_anchor"),
+        "total_used_continuity": usage.get("total_used_continuity"),
+        "total_used_lineage": usage.get("total_used_lineage"),
+        "total_remaining_identity_anchor": usage.get("total_remaining_identity_anchor"),
+        "total_remaining_continuity": usage.get("total_remaining_continuity"),
+        "total_remaining_lineage": usage.get("total_remaining_lineage"),
+        "keys": usage.get("keys", []),
+    }
+    snapshot_path = _write_account_usage_snapshot(config=config, payload=payload)
+    payload["snapshot_file"] = str(snapshot_path)
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    account = payload["account"] or {}
+    print(f"registry_base: {payload['registry_base']}", file=stdout)
+    print(f"account_id: {account.get('account_id')}", file=stdout)
+    print(f"email: {account.get('email')}", file=stdout)
+    print(f"tier: {account.get('tier')}", file=stdout)
+    print(f"linked_key_count: {payload['linked_key_count']}", file=stdout)
+    print(
+        "quota_periods: "
+        f"{','.join(str(item) for item in (payload['quota_periods'] or []))}",
+        file=stdout,
+    )
+    print(
+        "remaining_identity_anchor: "
+        f"{payload['total_remaining_identity_anchor']}",
+        file=stdout,
+    )
+    print(
+        "remaining_continuity: "
+        f"{payload['total_remaining_continuity']}",
+        file=stdout,
+    )
+    print(
+        "remaining_lineage: "
+        f"{payload['total_remaining_lineage']}",
+        file=stdout,
+    )
+    print(f"snapshot_file: {payload['snapshot_file']}", file=stdout)
+    return EXIT_SUCCESS
+
+
 def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         identity_target = _resolve_upgrade_identity_path(args)
@@ -985,7 +1101,7 @@ def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
         identity_error = str(exc)
 
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
 
     registry_info = None
     registry_error = None
@@ -1288,7 +1404,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
     registry_base = args.registry_base or config.registry_base
     agent_name = _resolve_agent_name(args, config)
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
     payload = sign_identity_anchor_request(
         build_identity_anchor_request(
             agent_public_key_b64=identity.public_key_b64,
@@ -1371,7 +1487,7 @@ def _run_anchor_issue(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_anchor_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
     try:
         bundle = client.get_identity_anchor_certificate(args.request_id)
     except RegistryUnavailableError as exc:
@@ -1577,7 +1693,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     signed_payload = sign_continuity_request(payload, identity.private_key_bytes)
 
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
     try:
         response = client.submit_continuity_request(signed_payload)
     except RegistryRequestError as exc:
@@ -1656,7 +1772,7 @@ def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_continuity_pay(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
 
     try:
         output = _resolve_payment_handoff(
@@ -1692,7 +1808,7 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
     timeout_seconds = max(1, int(args.timeout_seconds))
     poll_seconds = max(1, int(args.poll_seconds))
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
 
     deadline = time.time() + timeout_seconds
     latest = None
@@ -1731,7 +1847,7 @@ def _run_continuity_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
 
 def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_base = args.registry_base or config.registry_base
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
     try:
         bundle = client.get_continuity_certificate(args.request_id)
     except RegistryUnavailableError as exc:
@@ -1773,7 +1889,7 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
                 code=EXIT_VALIDATION_ERROR,
             )
         registry_base = args.registry_base or config.registry_base
-        client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+        client = _build_registry_client(registry_base=registry_base, config=config)
         try:
             key_payload = client.get_public_registry_key()
         except RegistryUnavailableError as exc:
@@ -1839,7 +1955,7 @@ def _run_flow(*, args, config: CLIConfig, stdout, stderr) -> int:
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
-    client = RegistryClient(base_url=registry_base, api_key=config.registry_api_key)
+    client = _build_registry_client(registry_base=registry_base, config=config)
 
     _print_step(stdout, index=2, total=total_steps, title="ensuring identity anchor")
     try:
@@ -2073,6 +2189,11 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         if args.registry_command == "status":
             return _run_registry_status(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"registry {args.registry_command}", stdout=stdout)
+
+    if args.command == "account":
+        if args.account_command == "usage":
+            return _run_account_usage(args=args, config=config, stdout=stdout, stderr=stderr)
+        return _coming_soon(path=f"account {args.account_command}", stdout=stdout)
 
     if args.command == "upgrade":
         if args.upgrade_command == "status":

@@ -197,6 +197,7 @@ beta_mode = true
 maturity_level = "beta"
 registry_base = "https://registry.ia-protocol.com"
 registry_api_key = "iap_live_optional"
+account_token = "iapt_live_optional"
 amcs_db_path = "./amcs.db"
 ```
 
@@ -205,7 +206,18 @@ Environment override:
 ```bash
 export IAP_REGISTRY_BASE="https://registry.ia-protocol.com"
 export IAP_REGISTRY_API_KEY="iap_live_optional"
+export IAP_ACCOUNT_TOKEN="iapt_live_optional"
 ```
+
+With an account token configured, you can inspect your current quota usage:
+
+```bash
+iap-agent account usage --json
+```
+
+The CLI also writes the latest successful account usage response to:
+
+- `<sessions_dir>/account_usage_last.json`
 
 Local development override example:
 

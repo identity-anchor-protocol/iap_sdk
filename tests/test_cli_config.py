@@ -54,6 +54,22 @@ def test_env_registry_api_key_overrides_config_file(tmp_path, monkeypatch) -> No
     assert config.registry_api_key == "from_env"
 
 
+def test_file_account_token_used_when_set(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('account_token = "acct_live_test"\n', encoding="utf-8")
+    monkeypatch.delenv("IAP_ACCOUNT_TOKEN", raising=False)
+    config = load_cli_config(config_path)
+    assert config.account_token == "acct_live_test"
+
+
+def test_env_account_token_overrides_config_file(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('account_token = "from_file"\n', encoding="utf-8")
+    monkeypatch.setenv("IAP_ACCOUNT_TOKEN", "from_env")
+    config = load_cli_config(config_path)
+    assert config.account_token == "from_env"
+
+
 def test_config_schema_version_defaults_to_one(tmp_path) -> None:
     config = load_cli_config(tmp_path / "missing.toml")
     assert config.config_schema_version == 1

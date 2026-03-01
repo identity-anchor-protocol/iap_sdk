@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from iap_sdk.cli.main import main
+from iap_sdk.errors import RegistryRequestError
 
 
 def test_version_json_has_expected_fields() -> None:
@@ -296,6 +297,131 @@ def test_registry_status_passes_configured_api_key(tmp_path, monkeypatch) -> Non
         "base_url": "https://registry.ia-protocol.com",
         "api_key": "iap_live_test",
     }
+
+
+def test_account_usage_passes_account_token_and_renders_json(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        'beta_mode = false\naccount_token = "iapt_test_token"\nsessions_dir = "'
+        + str(tmp_path / "sessions")
+        + '"\n',
+        encoding="utf-8",
+    )
+    captured: dict[str, str | None] = {}
+
+    class _Client:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
+            captured["base_url"] = base_url
+            captured["api_key"] = api_key
+            captured["account_token"] = account_token
+
+        def get_account_usage(self) -> dict:
+            return {
+                "account": {
+                    "account_id": "acct_123",
+                    "email": "admin@ia-protocol.com",
+                    "tier": "beta",
+                },
+                "linked_key_count": 1,
+                "quota_periods": ["2026-02"],
+                "total_monthly_identity_anchor_quota": 1,
+                "total_monthly_continuity_quota": 10,
+                "total_monthly_lineage_quota": 0,
+                "total_used_identity_anchor": 0,
+                "total_used_continuity": 2,
+                "total_used_lineage": 0,
+                "total_remaining_identity_anchor": 1,
+                "total_remaining_continuity": 8,
+                "total_remaining_lineage": 0,
+                "keys": [],
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["--config", str(config_path), "account", "usage", "--json"],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["account"]["account_id"] == "acct_123"
+    assert Path(payload["snapshot_file"]).exists()
+    assert captured == {
+        "base_url": "https://registry.ia-protocol.com",
+        "api_key": None,
+        "account_token": "iapt_test_token",
+    }
+    assert err.getvalue() == ""
+
+
+def test_account_usage_requires_account_token(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("beta_mode = false\n", encoding="utf-8")
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(
+        ["--config", str(config_path), "account", "usage"],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 1
+    assert out.getvalue() == ""
+    assert "missing account token" in err.getvalue()
+
+
+def test_account_usage_invalid_token_has_actionable_error(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        'beta_mode = false\naccount_token = "bad_token"\n',
+        encoding="utf-8",
+    )
+
+    class _Client:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            self.account_token = account_token
+
+        def get_account_usage(self) -> dict:
+            raise RegistryRequestError(
+                "registry request failed: 401 invalid account token",
+                status_code=401,
+                detail="invalid account token",
+                error_code="invalid_account_token",
+                body={"detail": "invalid account token"},
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["--config", str(config_path), "account", "usage"],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 2
+    assert out.getvalue() == ""
+    assert "ask your operator to issue a fresh account token" in err.getvalue()
 
 
 def test_upgrade_status_reports_registry_capabilities_and_sequences(tmp_path, monkeypatch) -> None:

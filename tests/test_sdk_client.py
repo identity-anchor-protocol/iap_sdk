@@ -64,3 +64,27 @@ def test_get_registry_info_uses_expected_path(monkeypatch) -> None:
 
     assert result == {"version": "0.2.0"}
     assert captured == ["GET /v1/registry/info"]
+
+
+def test_get_account_usage_uses_account_token_header(monkeypatch) -> None:
+    client = RegistryClient(
+        base_url="http://localhost:8080",
+        account_token="iapt_test_token",
+        timeout=0.1,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_request(method, url, *, json=None, headers=None, timeout=None):  # noqa: ANN001
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        return types.SimpleNamespace(status_code=200, json=lambda: {"linked_key_count": 1})
+
+    monkeypatch.setattr(client._session, "request", fake_request)
+
+    result = client.get_account_usage()
+
+    assert result == {"linked_key_count": 1}
+    assert captured["headers"] == {"x-iap-account-token": "iapt_test_token"}

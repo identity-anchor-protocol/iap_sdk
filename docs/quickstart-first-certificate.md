@@ -22,6 +22,14 @@ iap-agent upgrade migrate --json
 Use `--project-local` for a fresh agent. It creates a new identity in this folder instead of
 reusing the global identity at `~/.iap_agent/identity/ed25519.json`.
 
+If you were given an account token for quota-based access, set it once before running the rest of
+the flow:
+
+```bash
+export IAP_ACCOUNT_TOKEN="iapt_live_optional"
+iap-agent account usage --registry-base https://registry.ia-protocol.com --json
+```
+
 ## 3) Ensure identity anchor at registry
 
 ```bash

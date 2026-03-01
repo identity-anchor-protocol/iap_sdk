@@ -25,6 +25,30 @@ iap-agent version
 - verify `registry_base` in config or command override
 - check local/prod endpoint differences (`http://localhost:8080` vs `https://registry.ia-protocol.com`)
 
+## `missing account token` or `invalid account token`
+
+If you are using account-scoped quota checks:
+
+```bash
+iap-agent account usage --json
+```
+
+make sure the token is configured either in:
+
+```toml
+account_token = "iapt_live_optional"
+```
+
+or via:
+
+```bash
+export IAP_ACCOUNT_TOKEN="iapt_live_optional"
+```
+
+If the CLI says the token is invalid, request a fresh account token from your operator. On success,
+the latest account usage snapshot is also written locally under your configured `sessions_dir` as
+`account_usage_last.json`.
+
 ## request remains `WAITING_PAYMENT`
 
 - verify payment actually completed in provider dashboard

@@ -11,6 +11,7 @@ DEFAULT_CONFIG_PATH = Path.home() / ".iap_agent" / "config.toml"
 DEFAULT_REGISTRY_BASE = "https://registry.ia-protocol.com"
 REGISTRY_BASE_ENV_VAR = "IAP_REGISTRY_BASE"
 REGISTRY_API_KEY_ENV_VAR = "IAP_REGISTRY_API_KEY"
+ACCOUNT_TOKEN_ENV_VAR = "IAP_ACCOUNT_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class CLIConfig:
     maturity_level: str = "beta"
     registry_base: str = DEFAULT_REGISTRY_BASE
     registry_api_key: str | None = None
+    account_token: str | None = None
     agent_name: str = "Local Agent"
     amcs_db_path: str = "./amcs.db"
     sessions_dir: str = str(Path.home() / ".iap_agent" / "sessions")
@@ -100,6 +102,7 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
 
     env_registry_base = os.getenv(REGISTRY_BASE_ENV_VAR)
     env_registry_api_key = os.getenv(REGISTRY_API_KEY_ENV_VAR)
+    env_account_token = os.getenv(ACCOUNT_TOKEN_ENV_VAR)
     configured_registry_base = str(source.get("registry_base", DEFAULT_REGISTRY_BASE)).strip()
     registry_base = env_registry_base.strip() if env_registry_base else configured_registry_base
     if not registry_base:
@@ -112,6 +115,14 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         registry_api_key = None
     else:
         registry_api_key = str(configured_registry_api_key_raw).strip() or None
+
+    configured_account_token_raw = source.get("account_token")
+    if env_account_token is not None:
+        account_token = env_account_token.strip() or None
+    elif configured_account_token_raw is None:
+        account_token = None
+    else:
+        account_token = str(configured_account_token_raw).strip() or None
 
     agent_name = str(source.get("agent_name", "Local Agent")).strip()
     if not agent_name:
@@ -137,6 +148,7 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         maturity_level=maturity_level,
         registry_base=registry_base,
         registry_api_key=registry_api_key,
+        account_token=account_token,
         agent_name=agent_name,
         amcs_db_path=amcs_db_path,
         sessions_dir=sessions_dir,

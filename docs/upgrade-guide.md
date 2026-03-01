@@ -69,6 +69,25 @@ iap-agent upgrade migrate --json
 iap-agent registry status --json
 ```
 
+If your operator gave you an account token for self-service quota checks, you can also inspect your
+remaining allowance directly:
+
+```bash
+iap-agent account usage --json
+```
+
+Set the token either in config:
+
+```toml
+account_token = "iapt_live_optional"
+```
+
+or via environment:
+
+```bash
+export IAP_ACCOUNT_TOKEN="iapt_live_optional"
+```
+
 Then, if your tracked state changed after the upgrade:
 
 1. append new state to AMCS
