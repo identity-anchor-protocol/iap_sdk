@@ -76,6 +76,7 @@ remaining allowance directly:
 iap-agent registry set-base --base "https://registry.ia-protocol.com"
 iap-agent registry set-api-key --api-key "iapk_live_optional"
 iap-agent account set-token --token "iapt_live_optional"
+iap-agent registry check --json
 iap-agent account usage --json
 ```
 

@@ -63,6 +63,7 @@ If you are testing an account-scoped quota path, also set the account token your
 ```bash
 iap-agent registry set-base --base "$REGISTRY_BASE"
 iap-agent account set-token --token "iapt_live_optional"
+iap-agent registry check --json
 iap-agent account usage --registry-base "$REGISTRY_BASE" --json
 ```
 

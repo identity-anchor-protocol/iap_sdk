@@ -30,6 +30,11 @@ iap-agent registry set-base --base "https://registry.ia-protocol.com"
 ```
 
 - check local/prod endpoint differences (`http://localhost:8080` vs `https://registry.ia-protocol.com`)
+- run a read-only preflight to confirm registry reachability and local credential wiring:
+
+```bash
+iap-agent registry check --json
+```
 
 ## `missing account token` or `invalid account token`
 

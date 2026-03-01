@@ -148,6 +148,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to local identity file when deriving agent_id fallback",
     )
     registry_status.add_argument("--json", action="store_true")
+    registry_check = registry_sub.add_parser(
+        "check", help="Validate registry reachability and configured credentials"
+    )
+    registry_check.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    registry_check.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file when deriving agent_id fallback",
+    )
+    registry_check.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
+    registry_check.add_argument("--json", action="store_true")
     registry_set_base = registry_sub.add_parser(
         "set-base", help="Store or clear the default registry base URL in the CLI config"
     )
@@ -1063,6 +1082,148 @@ def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     )
     print(f"latest_continuity_request_id: {payload['latest_continuity_request_id']}", file=stdout)
     print(f"latest_continuity_issued_at: {payload['latest_continuity_issued_at']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_registry_check(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity_target = _resolve_upgrade_identity_path(args)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    identity = None
+    identity_path = identity_target
+    identity_error = None
+    try:
+        identity, identity_path = load_identity(identity_target)
+    except IdentityError as exc:
+        identity_error = str(exc)
+
+    registry_base = args.registry_base or config.registry_base
+    client = _build_registry_client(registry_base=registry_base, config=config)
+
+    registry_info = None
+    registry_error = None
+    try:
+        registry_info = client.get_registry_info()
+    except (RegistryRequestError, RegistryUnavailableError) as exc:
+        registry_error = str(exc)
+
+    agent_status = None
+    if identity is not None and registry_error is None:
+        try:
+            agent_status = client.get_agent_registry_status(identity.agent_id)
+        except (RegistryRequestError, RegistryUnavailableError) as exc:
+            registry_error = str(exc)
+
+    account_usage = None
+    account_error = None
+    if config.account_token and registry_error is None:
+        try:
+            account_usage = client.get_account_usage()
+        except (RegistryRequestError, RegistryUnavailableError) as exc:
+            account_error = str(exc)
+
+    warnings: list[str] = []
+    next_actions: list[str] = []
+    if registry_error:
+        warnings.append(f"registry lookup unavailable: {registry_error}")
+        next_actions.append("verify the registry base URL and network reachability")
+    if identity_error:
+        warnings.append("no usable local identity was found for agent-level status checks")
+        next_actions.append("run `iap-agent init --project-local` or select the correct identity")
+    if config.registry_api_key:
+        next_actions.append(
+            "registry API key is configured; issuance will prefer the "
+            "entitlement path when supported"
+        )
+    if config.account_token and account_error:
+        warnings.append(f"account token check failed: {account_error}")
+        next_actions.append(
+            "refresh the account token with `iap-agent account set-token --token ...` if needed"
+        )
+    elif config.account_token and account_usage is not None:
+        next_actions.append("account token is usable for self-service account usage reads")
+
+    payload = {
+        "registry_base": registry_base,
+        "registry_reachable": registry_info is not None,
+        "registry_version": registry_info.get("version") if registry_info else None,
+        "minimum_recommended_sdk_version": (
+            registry_info.get("minimum_recommended_sdk_version") if registry_info else None
+        ),
+        "supported_features": registry_info.get("supported_features", []) if registry_info else [],
+        "identity_checked": identity is not None,
+        "identity_path": str(identity_path),
+        "agent_id": identity.agent_id if identity is not None else None,
+        "has_identity_anchor": (
+            agent_status.get("has_identity_anchor") if isinstance(agent_status, dict) else None
+        ),
+        "latest_continuity_sequence": (
+            agent_status.get("latest_continuity_sequence")
+            if isinstance(agent_status, dict)
+            else None
+        ),
+        "registry_api_key_configured": bool(config.registry_api_key),
+        "account_token_configured": bool(config.account_token),
+        "account_token_valid": account_usage is not None if config.account_token else None,
+        "linked_key_count": (
+            account_usage.get("linked_key_count") if isinstance(account_usage, dict) else None
+        ),
+        "effective_remaining_identity_anchor": (
+            account_usage.get("effective_remaining_identity_anchor")
+            if isinstance(account_usage, dict)
+            else None
+        ),
+        "effective_remaining_continuity": (
+            account_usage.get("effective_remaining_continuity")
+            if isinstance(account_usage, dict)
+            else None
+        ),
+        "effective_remaining_lineage": (
+            account_usage.get("effective_remaining_lineage")
+            if isinstance(account_usage, dict)
+            else None
+        ),
+        "warnings": warnings,
+        "next_actions": next_actions,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"registry_base: {payload['registry_base']}", file=stdout)
+    print(f"registry_reachable: {payload['registry_reachable']}", file=stdout)
+    print(f"registry_version: {payload['registry_version']}", file=stdout)
+    print(
+        f"minimum_recommended_sdk_version: {payload['minimum_recommended_sdk_version']}",
+        file=stdout,
+    )
+    print(f"registry_api_key_configured: {payload['registry_api_key_configured']}", file=stdout)
+    print(f"account_token_configured: {payload['account_token_configured']}", file=stdout)
+    print(f"account_token_valid: {payload['account_token_valid']}", file=stdout)
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"has_identity_anchor: {payload['has_identity_anchor']}", file=stdout)
+    print(f"latest_continuity_sequence: {payload['latest_continuity_sequence']}", file=stdout)
+    print(
+        "effective_remaining_identity_anchor: "
+        f"{payload['effective_remaining_identity_anchor']}",
+        file=stdout,
+    )
+    print(
+        "effective_remaining_continuity: "
+        f"{payload['effective_remaining_continuity']}",
+        file=stdout,
+    )
+    print(
+        "effective_remaining_lineage: "
+        f"{payload['effective_remaining_lineage']}",
+        file=stdout,
+    )
+    if warnings:
+        print(f"warnings: {' | '.join(warnings)}", file=stdout)
+    if next_actions:
+        print(f"next_actions: {' | '.join(next_actions)}", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -2360,6 +2521,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "registry":
         if args.registry_command == "status":
             return _run_registry_status(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.registry_command == "check":
+            return _run_registry_check(args=args, config=config, stdout=stdout, stderr=stderr)
         if args.registry_command == "set-base":
             return _run_registry_set_base(args=args, stdout=stdout, stderr=stderr)
         if args.registry_command == "set-api-key":
