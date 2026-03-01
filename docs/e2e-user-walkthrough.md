@@ -61,9 +61,7 @@ If your operator provided an account token, add it to the same config so you can
 remaining quota without contacting support:
 
 ```bash
-cat >> ~/.iap_agent/config.toml <<'EOF'
-account_token = "iapt_live_optional"
-EOF
+iap-agent account set-token --token "iapt_live_optional"
 iap-agent account usage --registry-base "$REGISTRY_BASE" --json
 ```
 

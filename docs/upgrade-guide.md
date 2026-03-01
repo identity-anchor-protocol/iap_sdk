@@ -76,10 +76,10 @@ remaining allowance directly:
 iap-agent account usage --json
 ```
 
-Set the token either in config:
+Store the token in config:
 
-```toml
-account_token = "iapt_live_optional"
+```bash
+iap-agent account set-token --token "iapt_live_optional"
 ```
 
 or via environment:

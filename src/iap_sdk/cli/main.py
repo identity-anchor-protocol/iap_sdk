@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, append_files_to_amcs, get_amcs_root
-from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config
+from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config, save_cli_setting
 from iap_sdk.cli.identity import (
     DEFAULT_IDENTITY_PATH,
     IdentityError,
@@ -160,6 +160,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Registry base URL override (default from config)",
     )
     account_usage.add_argument("--json", action="store_true")
+    account_set_token = account_sub.add_parser(
+        "set-token", help="Store or clear the account token in the CLI config"
+    )
+    account_set_token_group = account_set_token.add_mutually_exclusive_group(required=True)
+    account_set_token_group.add_argument(
+        "--token",
+        default=None,
+        help="Account token value to store in the selected CLI config",
+    )
+    account_set_token_group.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove the stored account token from the selected CLI config",
+    )
+    account_set_token.add_argument("--json", action="store_true")
 
     upgrade = sub.add_parser("upgrade", help="Inspect upgrade readiness and compatibility")
     upgrade_sub = upgrade.add_subparsers(dest="upgrade_command", required=True)
@@ -1102,6 +1117,42 @@ def _run_account_usage(*, args, config: CLIConfig, stdout, stderr) -> int:
         file=stdout,
     )
     print(f"snapshot_file: {payload['snapshot_file']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_account_set_token(*, args, stdout, stderr) -> int:
+    token_value = None if args.clear else (args.token or "").strip()
+    if not args.clear and not token_value:
+        return _print_error(
+            stderr,
+            "account error",
+            "account token must not be empty",
+            code=EXIT_VALIDATION_ERROR,
+        )
+
+    try:
+        config_path = save_cli_setting(args.config, "account_token", token_value)
+    except ConfigError as exc:
+        return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = {
+        "config_file": str(config_path),
+        "account_token_stored": not args.clear,
+        "account_token_cleared": bool(args.clear),
+        "account_token_env_override": bool(os.getenv("IAP_ACCOUNT_TOKEN")),
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"config_file: {payload['config_file']}", file=stdout)
+    print("account_token: cleared" if args.clear else "account_token: stored", file=stdout)
+    if payload["account_token_env_override"]:
+        print(
+            "warning: IAP_ACCOUNT_TOKEN is currently set in the environment and will override "
+            "the stored config value in this shell",
+            file=stderr,
+        )
     return EXIT_SUCCESS
 
 
@@ -2214,6 +2265,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "account":
         if args.account_command == "usage":
             return _run_account_usage(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.account_command == "set-token":
+            return _run_account_set_token(args=args, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"account {args.account_command}", stdout=stdout)
 
     if args.command == "upgrade":

@@ -201,6 +201,12 @@ account_token = "iapt_live_optional"
 amcs_db_path = "./amcs.db"
 ```
 
+To bootstrap just the account token without editing TOML manually:
+
+```bash
+iap-agent account set-token --token "iapt_live_optional"
+```
+
 Environment override:
 
 ```bash

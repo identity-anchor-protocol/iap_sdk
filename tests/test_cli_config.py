@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from iap_sdk.cli.config import load_cli_config
+from iap_sdk.cli.config import load_cli_config, save_cli_setting
 
 
 def test_default_registry_base_is_production(tmp_path, monkeypatch) -> None:
@@ -87,3 +87,23 @@ def test_config_schema_version_rejects_invalid_values(tmp_path) -> None:
     config_path.write_text("config_schema_version = 0\n", encoding="utf-8")
     with pytest.raises(ValueError):
         load_cli_config(config_path)
+
+
+def test_save_cli_setting_writes_cli_section(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    saved = save_cli_setting(config_path, "account_token", "iapt_live_test")
+    assert saved == config_path
+    assert config_path.read_text(encoding="utf-8") == (
+        "[cli]\naccount_token = \"iapt_live_test\"\n"
+    )
+    loaded = load_cli_config(config_path)
+    assert loaded.account_token == "iapt_live_test"
+
+
+def test_save_cli_setting_can_clear_existing_value(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[cli]\naccount_token = "iapt_live_test"\n', encoding="utf-8")
+    save_cli_setting(config_path, "account_token", None)
+    assert config_path.read_text(encoding="utf-8") == "[cli]\n"
+    loaded = load_cli_config(config_path)
+    assert loaded.account_token is None

@@ -32,6 +32,20 @@ class ConfigError(ValueError):
     """Raised when CLI config is invalid."""
 
 
+_CLI_CONFIG_FIELDS = {
+    "config_schema_version",
+    "beta_mode",
+    "maturity_level",
+    "registry_base",
+    "registry_api_key",
+    "account_token",
+    "agent_name",
+    "amcs_db_path",
+    "sessions_dir",
+    "registry_public_key_b64",
+}
+
+
 def _load_toml(path: Path) -> dict[str, Any]:
     raw = path.read_text(encoding="utf-8")
 
@@ -154,3 +168,49 @@ def load_cli_config(path: str | Path | None = None) -> CLIConfig:
         sessions_dir=sessions_dir,
         registry_public_key_b64=registry_public_key_b64,
     )
+
+
+def _format_toml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def save_cli_setting(path: str | Path | None, key: str, value: Any | None) -> Path:
+    if key not in _CLI_CONFIG_FIELDS:
+        raise ConfigError(f"unsupported config key: {key}")
+
+    config_path = Path(path) if path else DEFAULT_CONFIG_PATH
+    parsed: dict[str, Any] = {}
+    if config_path.exists():
+        parsed = _load_toml(config_path)
+
+    if "cli" in parsed:
+        cli_section_raw = parsed.get("cli")
+        if cli_section_raw is None:
+            cli_section: dict[str, Any] = {}
+        elif isinstance(cli_section_raw, dict):
+            cli_section = dict(cli_section_raw)
+        else:
+            raise ConfigError("[cli] must be a table")
+    else:
+        cli_section = {}
+        for field in _CLI_CONFIG_FIELDS:
+            if field in parsed:
+                cli_section[field] = parsed[field]
+
+    if value is None:
+        cli_section.pop(key, None)
+    else:
+        cli_section[key] = value
+
+    lines = ["[cli]"]
+    for field in sorted(cli_section):
+        lines.append(f"{field} = {_format_toml_scalar(cli_section[field])}")
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return config_path

@@ -33,7 +33,13 @@ If you are using account-scoped quota checks:
 iap-agent account usage --json
 ```
 
-make sure the token is configured either in:
+store the token in config:
+
+```bash
+iap-agent account set-token --token "iapt_live_optional"
+```
+
+or configure it manually in:
 
 ```toml
 account_token = "iapt_live_optional"
