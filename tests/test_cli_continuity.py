@@ -302,3 +302,88 @@ def test_continuity_request_account_tier_quota_exceeded_has_actionable_error(
     assert rc == 2
     assert out.getvalue() == ""
     assert "monthly tier limit" in err.getvalue()
+
+
+def test_continuity_request_structured_account_tier_quota_exceeded_has_upgrade_options(
+    monkeypatch, tmp_path
+) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    identity = _identity()
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (identity, Path(path or "id")),
+    )
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.get_amcs_root",
+        lambda *, amcs_db_path, agent_id: AMCSRootResult(
+            agent_id=agent_id,
+            amcs_db_path=amcs_db_path,
+            memory_root="b" * 64,
+            sequence=1,
+        ),
+    )
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 429 {'message': 'account tier quota exceeded'}",
+                status_code=429,
+                detail={
+                    "message": "account tier quota exceeded",
+                    "certificate_type": "continuity",
+                    "plan": {
+                        "plan_id": "free",
+                        "label": "Free",
+                        "limit": 25,
+                        "used": 25,
+                        "remaining": 0,
+                    },
+                    "upgrade_options": [
+                        {
+                            "type": "plan",
+                            "plan_id": "starter",
+                            "label": "Starter",
+                            "monthly_identity_anchor_quota": 3,
+                            "monthly_continuity_quota": 100,
+                            "monthly_lineage_quota": 5,
+                        },
+                        {
+                            "type": "addon",
+                            "addon_id": "continuity_50",
+                            "label": "Continuity +50",
+                            "certificate_type": "continuity",
+                            "quota_increment": 50,
+                        },
+                    ],
+                },
+                error_code="rate_limited",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "continuity",
+            "request",
+            "--registry-base",
+            "http://registry.local",
+            "--sessions-dir",
+            str(tmp_path / "sessions"),
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 2
+    assert out.getvalue() == ""
+    message = err.getvalue()
+    assert "Your Free plan includes 25 continuity certificates per month." in message
+    assert "Choose a plan or add-on to continue." in message
+    assert "- Starter: 3/100/5" in message
+    assert "- Continuity +50: +50 continuity" in message
