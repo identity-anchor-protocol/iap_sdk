@@ -61,7 +61,7 @@ export REGISTRY_BASE="http://localhost:8080"
 If you are testing an account-scoped quota path, also set the account token your operator issued:
 
 ```bash
-export IAP_ACCOUNT_TOKEN="iapt_live_optional"
+iap-agent account set-token --token "iapt_live_optional"
 iap-agent account usage --registry-base "$REGISTRY_BASE" --json
 ```
 

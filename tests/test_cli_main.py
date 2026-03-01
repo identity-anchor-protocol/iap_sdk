@@ -424,6 +424,53 @@ def test_account_usage_invalid_token_has_actionable_error(tmp_path, monkeypatch)
     assert "ask your operator to issue a fresh account token" in err.getvalue()
 
 
+def test_account_set_token_stores_value_in_selected_config(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "set-token",
+            "--token",
+            "iapt_live_test",
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["account_token_stored"] is True
+    assert payload["account_token_cleared"] is False
+    assert payload["config_file"] == str(config_path)
+    written = config_path.read_text(encoding="utf-8")
+    assert 'account_token = "iapt_live_test"' in written
+    assert "beta mode" in err.getvalue()
+
+
+def test_account_set_token_clear_removes_value(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[cli]\naccount_token = "iapt_live_test"\n', encoding="utf-8")
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(
+        ["--config", str(config_path), "account", "set-token", "--clear"],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    assert "account_token: cleared" in out.getvalue()
+    assert 'account_token = "iapt_live_test"' not in config_path.read_text(encoding="utf-8")
+    assert "beta mode" in err.getvalue()
+
+
 def test_upgrade_status_reports_registry_capabilities_and_sequences(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "config.toml"
