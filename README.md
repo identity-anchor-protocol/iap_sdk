@@ -201,6 +201,13 @@ account_token = "iapt_live_optional"
 amcs_db_path = "./amcs.db"
 ```
 
+To bootstrap the two most common registry settings without editing TOML manually:
+
+```bash
+iap-agent registry set-base --base "https://registry.ia-protocol.com"
+iap-agent registry set-api-key --api-key "iapk_live_optional"
+```
+
 To bootstrap just the account token without editing TOML manually:
 
 ```bash

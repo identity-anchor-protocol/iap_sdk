@@ -23,6 +23,12 @@ iap-agent version
 
 - verify registry is running
 - verify `registry_base` in config or command override
+- if needed, store the live base explicitly:
+
+```bash
+iap-agent registry set-base --base "https://registry.ia-protocol.com"
+```
+
 - check local/prod endpoint differences (`http://localhost:8080` vs `https://registry.ia-protocol.com`)
 
 ## `missing account token` or `invalid account token`

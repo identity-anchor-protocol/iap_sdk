@@ -73,16 +73,13 @@ If your operator gave you an account token for self-service quota checks, you ca
 remaining allowance directly:
 
 ```bash
+iap-agent registry set-base --base "https://registry.ia-protocol.com"
+iap-agent registry set-api-key --api-key "iapk_live_optional"
+iap-agent account set-token --token "iapt_live_optional"
 iap-agent account usage --json
 ```
 
-Store the token in config:
-
-```bash
-iap-agent account set-token --token "iapt_live_optional"
-```
-
-or via environment:
+Environment overrides still work if you need a temporary shell-specific value:
 
 ```bash
 export IAP_ACCOUNT_TOKEN="iapt_live_optional"
