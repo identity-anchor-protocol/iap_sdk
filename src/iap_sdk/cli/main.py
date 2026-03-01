@@ -510,6 +510,16 @@ def _print_registry_request_error(stderr, exc: RegistryRequestError, *, code: in
             ),
             code=code,
         )
+    if exc.status_code == 403 and exc.detail == "account inactive":
+        return _print_error(
+            stderr,
+            "registry error",
+            (
+                "the account linked to this registry API key is inactive. Ask your operator to "
+                "reactivate the account or issue a different API key."
+            ),
+            code=code,
+        )
     if exc.status_code == 429 and exc.detail == "api key quota exceeded":
         return _print_error(
             stderr,
@@ -517,6 +527,17 @@ def _print_registry_request_error(stderr, exc: RegistryRequestError, *, code: in
             (
                 "registry API key quota exceeded for this billing window. Use a different API key, "
                 "wait for quota reset, or retry without the API key to use the payment flow."
+            ),
+            code=code,
+        )
+    if exc.status_code == 429 and exc.detail == "account tier quota exceeded":
+        return _print_error(
+            stderr,
+            "registry error",
+            (
+                "the linked account has reached its monthly tier limit. Ask your operator to "
+                "increase the account quota, use a different entitled account, or retry without "
+                "the API key to use the payment flow."
             ),
             code=code,
         )

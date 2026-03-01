@@ -241,3 +241,29 @@ def test_anchor_issue_api_key_quota_exceeded_has_actionable_error(monkeypatch) -
     rc = main(["anchor", "issue"], stdout=out, stderr=err)
     assert rc == 2
     assert "quota exceeded for this billing window" in err.getvalue()
+
+
+def test_anchor_issue_account_tier_quota_exceeded_has_actionable_error(monkeypatch) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    monkeypatch.setattr("iap_sdk.cli.main.load_identity", lambda path: (_Identity(), path))
+
+    class _Client:
+        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def submit_identity_anchor(self, payload: dict) -> dict:  # noqa: ARG002
+            raise RegistryRequestError(
+                "registry request failed: 429 account tier quota exceeded",
+                status_code=429,
+                detail="account tier quota exceeded",
+                error_code="rate_limited",
+            )
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(["anchor", "issue"], stdout=out, stderr=err)
+    assert rc == 2
+    assert "monthly tier limit" in err.getvalue()
