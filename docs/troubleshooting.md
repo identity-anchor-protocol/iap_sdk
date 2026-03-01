@@ -36,6 +36,12 @@ iap-agent registry set-base --base "https://registry.ia-protocol.com"
 iap-agent registry check --json
 ```
 
+If you also need to refresh the stored API key or account token at the same time:
+
+```bash
+iap-agent setup --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --check --json
+```
+
 ## `missing account token` or `invalid account token`
 
 If you are using account-scoped quota checks:

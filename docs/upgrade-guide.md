@@ -80,6 +80,12 @@ iap-agent registry check --json
 iap-agent account usage --json
 ```
 
+Or do the same bootstrap in one command:
+
+```bash
+iap-agent setup --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --check --json
+```
+
 Environment overrides still work if you need a temporary shell-specific value:
 
 ```bash
