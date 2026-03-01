@@ -208,6 +208,12 @@ iap-agent registry set-base --base "https://registry.ia-protocol.com"
 iap-agent registry set-api-key --api-key "iapk_live_optional"
 ```
 
+Or bootstrap base URL, entitlement API key, and account token together:
+
+```bash
+iap-agent setup --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --check --json
+```
+
 Before issuing requests, you can run a read-only preflight:
 
 ```bash

@@ -367,6 +367,99 @@ def test_registry_set_api_key_stores_and_clears_value(tmp_path) -> None:
     assert "beta mode" in err.getvalue()
 
 
+def test_setup_stores_multiple_values_and_runs_check(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+
+    class _Identity:
+        agent_id = "ed25519:test-agent"
+
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.load_identity",
+        lambda path: (_Identity(), Path(path or "id")),
+    )
+
+    class _Client:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            self.account_token = account_token
+
+        def get_registry_info(self) -> dict:
+            return {
+                "version": "0.2.0",
+                "minimum_recommended_sdk_version": "0.1.6",
+                "supported_features": ["account_tokens"],
+            }
+
+        def get_agent_registry_status(self, agent_id: str) -> dict:
+            return {
+                "agent_id": agent_id,
+                "has_identity_anchor": True,
+                "latest_continuity_sequence": 2,
+            }
+
+        def get_account_usage(self) -> dict:
+            return {
+                "linked_key_count": 1,
+                "effective_remaining_identity_anchor": 1,
+                "effective_remaining_continuity": 5,
+                "effective_remaining_lineage": 0,
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "setup",
+            "--registry-base",
+            "https://registry.example",
+            "--registry-api-key",
+            "iapk_live_test",
+            "--account-token",
+            "iapt_live_test",
+            "--check",
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["mutations"] == [
+        "registry_base stored",
+        "registry_api_key stored",
+        "account_token stored",
+    ]
+    assert payload["registry_check"]["registry_reachable"] is True
+    written = config_path.read_text(encoding="utf-8")
+    assert 'registry_base = "https://registry.example"' in written
+    assert 'registry_api_key = "iapk_live_test"' in written
+    assert 'account_token = "iapt_live_test"' in written
+    assert "beta mode" in err.getvalue()
+
+
+def test_setup_requires_at_least_one_action(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(["--config", str(config_path), "setup"], stdout=out, stderr=err)
+
+    assert rc == 1
+    assert "no setup action requested" in err.getvalue()
+
+
 def test_registry_check_reports_reachability_and_entitlements(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

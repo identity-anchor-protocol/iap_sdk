@@ -67,6 +67,12 @@ iap-agent registry check --json
 iap-agent account usage --registry-base "$REGISTRY_BASE" --json
 ```
 
+Single-command equivalent:
+
+```bash
+iap-agent setup --registry-base "$REGISTRY_BASE" --account-token "iapt_live_optional" --check --json
+```
+
 This confirms:
 
 - the account token is valid

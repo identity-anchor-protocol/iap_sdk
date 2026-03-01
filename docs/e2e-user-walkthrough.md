@@ -68,6 +68,12 @@ iap-agent registry check --json
 iap-agent account usage --registry-base "$REGISTRY_BASE" --json
 ```
 
+Single-command equivalent:
+
+```bash
+iap-agent setup --registry-base "$REGISTRY_BASE" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --check --json
+```
+
 ## 1) Create your local agent identity
 
 Recommended for a fresh agent project: create a project-local identity so this folder gets its own

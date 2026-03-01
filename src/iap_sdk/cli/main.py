@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Sequence
 from uuid import uuid4
 
@@ -130,6 +132,47 @@ def _build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--identity-file", default=None)
     commit.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
     commit.add_argument("--json", action="store_true")
+
+    setup = sub.add_parser("setup", help="Bootstrap registry access settings in one command")
+    setup_registry_base_group = setup.add_mutually_exclusive_group()
+    setup_registry_base_group.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL to store in the selected CLI config",
+    )
+    setup_registry_base_group.add_argument(
+        "--clear-registry-base",
+        action="store_true",
+        help="Remove the stored registry base from the selected CLI config",
+    )
+    setup_registry_api_key_group = setup.add_mutually_exclusive_group()
+    setup_registry_api_key_group.add_argument(
+        "--registry-api-key",
+        default=None,
+        help="Registry entitlement API key to store in the selected CLI config",
+    )
+    setup_registry_api_key_group.add_argument(
+        "--clear-registry-api-key",
+        action="store_true",
+        help="Remove the stored registry API key from the selected CLI config",
+    )
+    setup_account_token_group = setup.add_mutually_exclusive_group()
+    setup_account_token_group.add_argument(
+        "--account-token",
+        default=None,
+        help="Account token to store in the selected CLI config",
+    )
+    setup_account_token_group.add_argument(
+        "--clear-account-token",
+        action="store_true",
+        help="Remove the stored account token from the selected CLI config",
+    )
+    setup.add_argument(
+        "--check",
+        action="store_true",
+        help="Run `registry check` immediately after writing config changes",
+    )
+    setup.add_argument("--json", action="store_true")
 
     registry = sub.add_parser("registry", help="Inspect registry state")
     registry_sub = registry.add_subparsers(dest="registry_command", required=True)
@@ -1294,6 +1337,143 @@ def _run_registry_set_api_key(*, args, stdout, stderr) -> int:
             "the stored config value in this shell",
             file=stderr,
         )
+    return EXIT_SUCCESS
+
+
+def _run_setup(*, args, stdout, stderr) -> int:
+    actions_requested = bool(
+        args.registry_base is not None
+        or args.clear_registry_base
+        or args.registry_api_key is not None
+        or args.clear_registry_api_key
+        or args.account_token is not None
+        or args.clear_account_token
+        or args.check
+    )
+    if not actions_requested:
+        return _print_error(
+            stderr,
+            "setup error",
+            "no setup action requested; provide at least one setting or use --check",
+            code=EXIT_VALIDATION_ERROR,
+        )
+
+    mutations: list[str] = []
+    if args.registry_base is not None or args.clear_registry_base:
+        base_value = None if args.clear_registry_base else args.registry_base.strip()
+        if args.registry_base is not None and not base_value:
+            return _print_error(
+                stderr,
+                "setup error",
+                "registry base URL must not be empty",
+                code=EXIT_VALIDATION_ERROR,
+            )
+        try:
+            save_cli_setting(args.config, "registry_base", base_value)
+        except ConfigError as exc:
+            return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+        mutations.append(
+            "registry_base cleared" if args.clear_registry_base else "registry_base stored"
+        )
+
+    if args.registry_api_key is not None or args.clear_registry_api_key:
+        api_key_value = None if args.clear_registry_api_key else args.registry_api_key.strip()
+        if args.registry_api_key is not None and not api_key_value:
+            return _print_error(
+                stderr,
+                "setup error",
+                "registry API key must not be empty",
+                code=EXIT_VALIDATION_ERROR,
+            )
+        try:
+            save_cli_setting(args.config, "registry_api_key", api_key_value)
+        except ConfigError as exc:
+            return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+        mutations.append(
+            "registry_api_key cleared" if args.clear_registry_api_key else "registry_api_key stored"
+        )
+
+    if args.account_token is not None or args.clear_account_token:
+        account_token_value = None if args.clear_account_token else args.account_token.strip()
+        if args.account_token is not None and not account_token_value:
+            return _print_error(
+                stderr,
+                "setup error",
+                "account token must not be empty",
+                code=EXIT_VALIDATION_ERROR,
+            )
+        try:
+            save_cli_setting(args.config, "account_token", account_token_value)
+        except ConfigError as exc:
+            return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+        mutations.append(
+            "account_token cleared" if args.clear_account_token else "account_token stored"
+        )
+
+    try:
+        updated_config = load_cli_config(args.config)
+    except ConfigError as exc:
+        return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    config_file = Path(args.config) if args.config else Path.home() / ".iap_agent" / "config.toml"
+    payload = {
+        "config_file": str(config_file),
+        "mutations": mutations,
+        "registry_base_env_override": bool(os.getenv("IAP_REGISTRY_BASE")),
+        "registry_api_key_env_override": bool(os.getenv("IAP_REGISTRY_API_KEY")),
+        "account_token_env_override": bool(os.getenv("IAP_ACCOUNT_TOKEN")),
+        "registry_check": None,
+    }
+
+    if args.check:
+        check_out = io.StringIO()
+        check_args = SimpleNamespace(
+            registry_base=None,
+            identity_file=None,
+            project_local=False,
+            json=True,
+        )
+        check_rc = _run_registry_check(
+            args=check_args,
+            config=updated_config,
+            stdout=check_out,
+            stderr=stderr,
+        )
+        if check_rc != EXIT_SUCCESS:
+            return check_rc
+        payload["registry_check"] = json.loads(check_out.getvalue())
+
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"config_file: {payload['config_file']}", file=stdout)
+    if mutations:
+        print("mutations:", file=stdout)
+        for item in mutations:
+            print(f"- {item}", file=stdout)
+    else:
+        print("mutations: none", file=stdout)
+    if payload["registry_base_env_override"]:
+        print(
+            "warning: IAP_REGISTRY_BASE is currently set in the environment and will override "
+            "the stored config value in this shell",
+            file=stderr,
+        )
+    if payload["registry_api_key_env_override"]:
+        print(
+            "warning: IAP_REGISTRY_API_KEY is currently set in the environment and will override "
+            "the stored config value in this shell",
+            file=stderr,
+        )
+    if payload["account_token_env_override"]:
+        print(
+            "warning: IAP_ACCOUNT_TOKEN is currently set in the environment and will override "
+            "the stored config value in this shell",
+            file=stderr,
+        )
+    if payload["registry_check"] is not None:
+        print("registry_check: completed", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -2511,6 +2691,9 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
 
     if args.command == "init":
         return _run_init(args=args, stdout=stdout, stderr=stderr)
+
+    if args.command == "setup":
+        return _run_setup(args=args, stdout=stdout, stderr=stderr)
 
     if args.command == "track":
         return _run_track(args=args, config=config, stdout=stdout, stderr=stderr)

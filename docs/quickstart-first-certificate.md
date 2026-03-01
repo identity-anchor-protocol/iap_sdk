@@ -33,6 +33,12 @@ iap-agent registry check --json
 iap-agent account usage --registry-base https://registry.ia-protocol.com --json
 ```
 
+Single-command equivalent:
+
+```bash
+iap-agent setup --registry-base "https://registry.ia-protocol.com" --registry-api-key "iapk_live_optional" --account-token "iapt_live_optional" --check --json
+```
+
 ## 3) Ensure identity anchor at registry
 
 ```bash
