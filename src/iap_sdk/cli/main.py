@@ -267,6 +267,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Remove the stored account token from the selected CLI config",
     )
     account_set_token.add_argument("--json", action="store_true")
+    account_handoff = account_sub.add_parser(
+        "handoff",
+        help="Print operator-to-user onboarding commands for registry access",
+    )
+    account_handoff.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL to include in the generated setup command",
+    )
+    account_handoff.add_argument(
+        "--registry-api-key",
+        default=None,
+        help="Registry entitlement API key to include in the generated setup command",
+    )
+    account_handoff.add_argument(
+        "--account-token",
+        default=None,
+        help="Account token to include in the generated setup command",
+    )
+    account_handoff.add_argument("--json", action="store_true")
 
     upgrade = sub.add_parser("upgrade", help="Inspect upgrade readiness and compatibility")
     upgrade_sub = upgrade.add_subparsers(dest="upgrade_command", required=True)
@@ -1597,6 +1617,42 @@ def _run_account_set_token(*, args, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _run_account_handoff(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = (args.registry_base or config.registry_base).strip()
+    registry_api_key = args.registry_api_key
+    if registry_api_key is None:
+        registry_api_key = config.registry_api_key
+    account_token = args.account_token
+    if account_token is None:
+        account_token = config.account_token
+
+    setup_parts = ["iap-agent setup", f'--registry-base "{registry_base}"']
+    if registry_api_key:
+        setup_parts.append(f'--registry-api-key "{registry_api_key}"')
+    if account_token:
+        setup_parts.append(f'--account-token "{account_token}"')
+    setup_parts.extend(["--check", "--json"])
+
+    commands = [" ".join(setup_parts)]
+    if account_token:
+        commands.append("iap-agent account usage --json")
+
+    payload = {
+        "registry_base": registry_base,
+        "includes_registry_api_key": bool(registry_api_key),
+        "includes_account_token": bool(account_token),
+        "commands": commands,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print("Send these commands to the end user:", file=stdout)
+    for command in commands:
+        print(command, file=stdout)
+    return EXIT_SUCCESS
+
+
 def _run_upgrade_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
         identity_target = _resolve_upgrade_identity_path(args)
@@ -2717,6 +2773,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
             return _run_account_usage(args=args, config=config, stdout=stdout, stderr=stderr)
         if args.account_command == "set-token":
             return _run_account_set_token(args=args, stdout=stdout, stderr=stderr)
+        if args.account_command == "handoff":
+            return _run_account_handoff(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"account {args.account_command}", stdout=stdout)
 
     if args.command == "upgrade":
