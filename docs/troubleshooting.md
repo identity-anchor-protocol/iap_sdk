@@ -49,6 +49,15 @@ If the CLI says the token is invalid, request a fresh account token from your op
 the latest account usage snapshot is also written locally under your configured `sessions_dir` as
 `account_usage_last.json`.
 
+## `account tier quota exceeded`
+
+This means the API key itself may still be valid, but the linked account has reached its monthly
+tier cap. You have three options:
+
+- ask your operator to increase the account-level quota
+- switch to a different account/API key with remaining entitlement
+- retry without `IAP_REGISTRY_API_KEY` so the request uses the payment flow instead
+
 ## request remains `WAITING_PAYMENT`
 
 - verify payment actually completed in provider dashboard
