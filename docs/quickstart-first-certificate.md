@@ -26,6 +26,8 @@ If you were given an account token for quota-based access, set it once before ru
 the flow:
 
 ```bash
+iap-agent registry set-base --base "https://registry.ia-protocol.com"
+iap-agent registry set-api-key --api-key "iapk_live_optional"
 iap-agent account set-token --token "iapt_live_optional"
 iap-agent account usage --registry-base https://registry.ia-protocol.com --json
 ```

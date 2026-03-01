@@ -61,6 +61,8 @@ If your operator provided an account token, add it to the same config so you can
 remaining quota without contacting support:
 
 ```bash
+iap-agent registry set-base --base "$REGISTRY_BASE"
+iap-agent registry set-api-key --api-key "iapk_live_optional"
 iap-agent account set-token --token "iapt_live_optional"
 iap-agent account usage --registry-base "$REGISTRY_BASE" --json
 ```

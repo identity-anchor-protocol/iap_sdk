@@ -299,6 +299,74 @@ def test_registry_status_passes_configured_api_key(tmp_path, monkeypatch) -> Non
     }
 
 
+def test_registry_set_base_stores_value_in_selected_config(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "registry",
+            "set-base",
+            "--base",
+            "https://registry.example",
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["registry_base_stored"] is True
+    assert payload["registry_base_cleared"] is False
+    assert payload["config_file"] == str(config_path)
+    written = config_path.read_text(encoding="utf-8")
+    assert 'registry_base = "https://registry.example"' in written
+    assert "beta mode" in err.getvalue()
+
+
+def test_registry_set_api_key_stores_and_clears_value(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    out = io.StringIO()
+    err = io.StringIO()
+
+    rc_store = main(
+        [
+            "--config",
+            str(config_path),
+            "registry",
+            "set-api-key",
+            "--api-key",
+            "iapk_live_test",
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc_store == 0
+    payload = json.loads(out.getvalue())
+    assert payload["registry_api_key_stored"] is True
+    assert 'registry_api_key = "iapk_live_test"' in config_path.read_text(encoding="utf-8")
+    assert "beta mode" in err.getvalue()
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc_clear = main(
+        ["--config", str(config_path), "registry", "set-api-key", "--clear"],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc_clear == 0
+    assert "registry_api_key: cleared" in out.getvalue()
+    assert 'registry_api_key = "iapk_live_test"' not in config_path.read_text(encoding="utf-8")
+    assert "beta mode" in err.getvalue()
+
+
 def test_account_usage_passes_account_token_and_renders_json(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

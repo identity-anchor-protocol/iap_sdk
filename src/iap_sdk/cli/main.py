@@ -148,6 +148,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to local identity file when deriving agent_id fallback",
     )
     registry_status.add_argument("--json", action="store_true")
+    registry_set_base = registry_sub.add_parser(
+        "set-base", help="Store or clear the default registry base URL in the CLI config"
+    )
+    registry_set_base_group = registry_set_base.add_mutually_exclusive_group(required=True)
+    registry_set_base_group.add_argument(
+        "--base",
+        default=None,
+        help="Registry base URL to store in the selected CLI config",
+    )
+    registry_set_base_group.add_argument(
+        "--clear",
+        action="store_true",
+        help="Reset the stored registry base to the default value",
+    )
+    registry_set_base.add_argument("--json", action="store_true")
+    registry_set_api_key = registry_sub.add_parser(
+        "set-api-key", help="Store or clear the registry API key in the CLI config"
+    )
+    registry_set_api_key_group = registry_set_api_key.add_mutually_exclusive_group(required=True)
+    registry_set_api_key_group.add_argument(
+        "--api-key",
+        default=None,
+        help="Registry entitlement API key to store in the selected CLI config",
+    )
+    registry_set_api_key_group.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove the stored registry API key from the selected CLI config",
+    )
+    registry_set_api_key.add_argument("--json", action="store_true")
 
     account = sub.add_parser("account", help="Inspect account-scoped quota and usage")
     account_sub = account.add_subparsers(dest="account_command", required=True)
@@ -1033,6 +1063,76 @@ def _run_registry_status(*, args, config: CLIConfig, stdout, stderr) -> int:
     )
     print(f"latest_continuity_request_id: {payload['latest_continuity_request_id']}", file=stdout)
     print(f"latest_continuity_issued_at: {payload['latest_continuity_issued_at']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_registry_set_base(*, args, stdout, stderr) -> int:
+    base_value = None if args.clear else (args.base or "").strip()
+    if not args.clear and not base_value:
+        return _print_error(
+            stderr,
+            "registry error",
+            "registry base URL must not be empty",
+            code=EXIT_VALIDATION_ERROR,
+        )
+    try:
+        config_path = save_cli_setting(args.config, "registry_base", base_value)
+    except ConfigError as exc:
+        return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = {
+        "config_file": str(config_path),
+        "registry_base_stored": not args.clear,
+        "registry_base_cleared": bool(args.clear),
+        "registry_base_env_override": bool(os.getenv("IAP_REGISTRY_BASE")),
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"config_file: {payload['config_file']}", file=stdout)
+    print("registry_base: cleared" if args.clear else "registry_base: stored", file=stdout)
+    if payload["registry_base_env_override"]:
+        print(
+            "warning: IAP_REGISTRY_BASE is currently set in the environment and will override "
+            "the stored config value in this shell",
+            file=stderr,
+        )
+    return EXIT_SUCCESS
+
+
+def _run_registry_set_api_key(*, args, stdout, stderr) -> int:
+    api_key_value = None if args.clear else (args.api_key or "").strip()
+    if not args.clear and not api_key_value:
+        return _print_error(
+            stderr,
+            "registry error",
+            "registry API key must not be empty",
+            code=EXIT_VALIDATION_ERROR,
+        )
+    try:
+        config_path = save_cli_setting(args.config, "registry_api_key", api_key_value)
+    except ConfigError as exc:
+        return _print_error(stderr, "config error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = {
+        "config_file": str(config_path),
+        "registry_api_key_stored": not args.clear,
+        "registry_api_key_cleared": bool(args.clear),
+        "registry_api_key_env_override": bool(os.getenv("IAP_REGISTRY_API_KEY")),
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"config_file: {payload['config_file']}", file=stdout)
+    print("registry_api_key: cleared" if args.clear else "registry_api_key: stored", file=stdout)
+    if payload["registry_api_key_env_override"]:
+        print(
+            "warning: IAP_REGISTRY_API_KEY is currently set in the environment and will override "
+            "the stored config value in this shell",
+            file=stderr,
+        )
     return EXIT_SUCCESS
 
 
@@ -2260,6 +2360,10 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
     if args.command == "registry":
         if args.registry_command == "status":
             return _run_registry_status(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.registry_command == "set-base":
+            return _run_registry_set_base(args=args, stdout=stdout, stderr=stderr)
+        if args.registry_command == "set-api-key":
+            return _run_registry_set_api_key(args=args, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"registry {args.registry_command}", stdout=stdout)
 
     if args.command == "account":
