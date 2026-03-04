@@ -353,6 +353,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to local identity file when deriving agent_id fallback",
     )
+    amcs_root.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
     amcs_root.add_argument("--json", action="store_true", help="Print AMCS root details as JSON")
     amcs_append = amcs_sub.add_parser("append", help="Append local files into AMCS as state events")
     amcs_append.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
@@ -361,6 +366,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--identity-file",
         default=None,
         help="Path to local identity file when deriving agent_id fallback",
+    )
+    amcs_append.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
     )
     amcs_append.add_argument(
         "--file",
@@ -1938,7 +1948,8 @@ def _run_amcs_root(*, args, config: CLIConfig, stdout, stderr) -> int:
     agent_id = args.agent_id
     if not agent_id:
         try:
-            identity, _ = load_identity(args.identity_file)
+            identity_target = _resolve_upgrade_identity_path(args)
+            identity, _ = load_identity(identity_target)
             agent_id = identity.agent_id
         except IdentityError as exc:
             print(f"identity error: {exc}", file=stderr)
@@ -1972,7 +1983,8 @@ def _run_amcs_append(*, args, config: CLIConfig, stdout, stderr) -> int:
     agent_id = args.agent_id
     if not agent_id:
         try:
-            identity, _ = load_identity(args.identity_file)
+            identity_target = _resolve_upgrade_identity_path(args)
+            identity, _ = load_identity(identity_target)
             agent_id = identity.agent_id
         except IdentityError as exc:
             return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
