@@ -45,9 +45,16 @@ def test_continuity_request_from_amcs_writes_session(monkeypatch, tmp_path) -> N
     )
 
     class _Client:
-        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.account_token = account_token
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["agent_id"] == identity.agent_id
@@ -90,6 +97,76 @@ def test_continuity_request_from_amcs_writes_session(monkeypatch, tmp_path) -> N
     assert session_json["request_id"] == "req-123"
 
 
+def test_continuity_request_prefers_project_local_identity_when_present(
+    monkeypatch, tmp_path
+) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+
+    identity = _identity()
+    expected_identity = tmp_path / ".iap" / "identity" / "ed25519.json"
+    expected_identity.parent.mkdir(parents=True, exist_ok=True)
+    expected_identity.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_load_identity(path):
+        assert Path(path) == expected_identity
+        return identity, expected_identity
+
+    monkeypatch.setattr("iap_sdk.cli.main.load_identity", fake_load_identity)
+    monkeypatch.setattr(
+        "iap_sdk.cli.main.get_amcs_root",
+        lambda *, amcs_db_path, agent_id: AMCSRootResult(
+            agent_id=agent_id,
+            amcs_db_path=amcs_db_path,
+            memory_root="f" * 64,
+            sequence=3,
+        ),
+    )
+
+    class _Client:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            self.account_token = account_token
+
+        def submit_continuity_request(self, payload: dict) -> dict:
+            assert payload["agent_id"] == identity.agent_id
+            return {
+                "request_id": "req-local",
+                "status": "WAITING_PAYMENT",
+                "lnbits_payment_hash": "hash-local",
+                "lightning_invoice": "lnbc1...",
+                "amount_sats": 21,
+            }
+
+    monkeypatch.setattr("iap_sdk.cli.main.RegistryClient", _Client)
+
+    rc = main(
+        [
+            "continuity",
+            "request",
+            "--registry-base",
+            "http://registry.local",
+            "--sessions-dir",
+            str(tmp_path / "sessions"),
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["request_id"] == "req-local"
+
+
 def test_continuity_request_explicit_root_sequence_skips_amcs(monkeypatch, tmp_path) -> None:
     out = io.StringIO()
     err = io.StringIO()
@@ -106,9 +183,16 @@ def test_continuity_request_explicit_root_sequence_skips_amcs(monkeypatch, tmp_p
     monkeypatch.setattr("iap_sdk.cli.main.get_amcs_root", fail_amcs)
 
     class _Client:
-        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.account_token = account_token
 
         def submit_continuity_request(self, payload: dict) -> dict:
             assert payload["memory_root"] == "a" * 64
@@ -143,6 +227,31 @@ def test_continuity_request_explicit_root_sequence_skips_amcs(monkeypatch, tmp_p
     assert err.getvalue().startswith("[beta]")
 
 
+def test_continuity_request_project_local_conflicts_with_identity_file(tmp_path) -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+    identity_path = tmp_path / "identity.json"
+
+    rc = main(
+        [
+            "continuity",
+            "request",
+            "--project-local",
+            "--identity-file",
+            str(identity_path),
+            "--memory-root",
+            "a" * 64,
+            "--sequence",
+            "5",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 1
+    assert "cannot use --project-local together with --identity-file" in err.getvalue()
+
+
 def test_continuity_request_sequence_conflict_shows_actionable_hint(monkeypatch, tmp_path) -> None:
     out = io.StringIO()
     err = io.StringIO()
@@ -163,9 +272,16 @@ def test_continuity_request_sequence_conflict_shows_actionable_hint(monkeypatch,
     )
 
     class _Client:
-        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.account_token = account_token
 
         def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryRequestError(
@@ -218,9 +334,16 @@ def test_continuity_request_invalid_api_key_has_actionable_error(monkeypatch, tm
     )
 
     class _Client:
-        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.account_token = account_token
 
         def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryRequestError(
@@ -272,9 +395,16 @@ def test_continuity_request_account_tier_quota_exceeded_has_actionable_error(
     )
 
     class _Client:
-        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.account_token = account_token
 
         def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryRequestError(
@@ -326,9 +456,16 @@ def test_continuity_request_structured_account_tier_quota_exceeded_has_upgrade_o
     )
 
     class _Client:
-        def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str | None = None,
+            account_token: str | None = None,
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.account_token = account_token
 
         def submit_continuity_request(self, payload: dict) -> dict:  # noqa: ARG002
             raise RegistryRequestError(

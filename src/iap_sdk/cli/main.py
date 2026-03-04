@@ -511,6 +511,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
     )
+    continuity_request.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
     continuity_request.add_argument("--agent-name", default=None)
     continuity_request.add_argument("--agent-custody-class", default=None)
     continuity_request.add_argument("--memory-root", default=None)
@@ -2303,7 +2308,8 @@ def _resolve_payment_handoff(
 
 def _run_continuity_request(*, args, config: CLIConfig, stdout, stderr) -> int:
     try:
-        identity, _ = load_identity(args.identity_file)
+        identity_target = _resolve_upgrade_identity_path(args)
+        identity, _ = load_identity(identity_target)
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
