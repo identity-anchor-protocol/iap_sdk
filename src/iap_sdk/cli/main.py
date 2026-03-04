@@ -41,8 +41,10 @@ from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import (
     build_continuity_request,
     build_identity_anchor_request,
+    build_lineage_request,
     sign_continuity_request,
     sign_identity_anchor_request,
+    sign_lineage_request,
 )
 from iap_sdk.verify import verify_certificate_file
 
@@ -571,6 +573,67 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     continuity_cert.add_argument("--json", action="store_true")
+
+    lineage = sub.add_parser("lineage", help="Lineage certificate operations")
+    lineage_sub = lineage.add_subparsers(dest="lineage_command", required=True)
+    lineage_request = lineage_sub.add_parser("request", help="Submit signed lineage request")
+    lineage_request.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    lineage_request.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    lineage_request.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
+    lineage_request.add_argument("--parent-agent-id", default=None)
+    lineage_request.add_argument("--fork-event-hash", default=None)
+    lineage_request.add_argument(
+        "--lineage-proof-policy",
+        choices=("parent_anchor_exists", "parent_consent_signature"),
+        default="parent_anchor_exists",
+    )
+    lineage_request.add_argument("--parent-consent-signature-b64", default=None)
+    lineage_request.add_argument(
+        "--sessions-dir",
+        default=None,
+        help="Directory to store request session artifacts (default from config)",
+    )
+    lineage_request.add_argument("--json", action="store_true", help="Print response as JSON")
+
+    lineage_wait = lineage_sub.add_parser("wait", help="Wait until request is CERTIFIED")
+    lineage_wait.add_argument("--request-id", required=True)
+    lineage_wait.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    lineage_wait.add_argument("--timeout-seconds", type=int, default=300)
+    lineage_wait.add_argument("--poll-seconds", type=int, default=5)
+    lineage_wait.add_argument("--json", action="store_true")
+
+    lineage_cert = lineage_sub.add_parser("cert", help="Fetch and save issued certificate")
+    lineage_cert.add_argument("--request-id", required=True)
+    lineage_cert.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    lineage_cert.add_argument(
+        "--output-file",
+        default=None,
+        help=(
+            "Path for certificate bundle JSON "
+            "(default: <sessions_dir>/certificates/<request_id>.json)"
+        ),
+    )
+    lineage_cert.add_argument("--json", action="store_true")
 
     flow = sub.add_parser("flow", help="High-level guided flows")
     flow_sub = flow.add_subparsers(dest="flow_command", required=True)
@@ -2529,6 +2592,160 @@ def _run_continuity_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
     return EXIT_SUCCESS
 
 
+def _run_lineage_request(*, args, config: CLIConfig, stdout, stderr) -> int:
+    try:
+        identity_target = _resolve_upgrade_identity_path(args)
+        identity, _ = load_identity(identity_target)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = build_lineage_request(
+        agent_public_key_b64=identity.public_key_b64,
+        agent_id=identity.agent_id,
+        parent_agent_id=args.parent_agent_id,
+        fork_event_hash=args.fork_event_hash,
+        lineage_proof_policy=args.lineage_proof_policy,
+        parent_consent_signature_b64=args.parent_consent_signature_b64,
+    )
+    signed_payload = sign_lineage_request(payload, identity.private_key_bytes)
+
+    registry_base = args.registry_base or config.registry_base
+    client = _build_registry_client(registry_base=registry_base, config=config)
+    try:
+        response = client.submit_lineage_request(signed_payload)
+    except RegistryRequestError as exc:
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    request_id = response.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return _print_error(
+            stderr,
+            "registry error",
+            "invalid response (missing request_id)",
+            code=EXIT_NETWORK_ERROR,
+        )
+
+    session_payload = {
+        "created_at": _utc_now_iso(),
+        "registry_base": registry_base,
+        "agent_id": identity.agent_id,
+        "request_id": request_id,
+        "request_payload": signed_payload,
+        "response": response,
+    }
+    sessions_dir = args.sessions_dir or config.sessions_dir
+    try:
+        session_path = save_session_record(
+            sessions_dir=sessions_dir,
+            request_id=request_id,
+            payload=session_payload,
+        )
+    except SessionError as exc:
+        return _print_error(stderr, "session error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    output = {
+        "request_id": request_id,
+        "status": response.get("status"),
+        "agent_id": identity.agent_id,
+        "parent_agent_id": args.parent_agent_id,
+        "fork_event_hash": args.fork_event_hash,
+        "lineage_proof_policy": args.lineage_proof_policy,
+        "session_file": str(session_path),
+        "registry_base": registry_base,
+        "payment": {
+            "lnbits_payment_hash": response.get("lnbits_payment_hash"),
+            "lightning_invoice": response.get("lightning_invoice"),
+            "amount_sats": response.get("amount_sats"),
+        },
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"status: {output['status']}", file=stdout)
+    print(f"agent_id: {output['agent_id']}", file=stdout)
+    print(f"parent_agent_id: {output['parent_agent_id']}", file=stdout)
+    print(f"fork_event_hash: {output['fork_event_hash']}", file=stdout)
+    print(f"lineage_proof_policy: {output['lineage_proof_policy']}", file=stdout)
+    print(f"session_file: {output['session_file']}", file=stdout)
+    print(f"registry_base: {output['registry_base']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_lineage_wait(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = args.registry_base or config.registry_base
+    timeout_seconds = max(1, int(args.timeout_seconds))
+    poll_seconds = max(1, int(args.poll_seconds))
+    client = _build_registry_client(registry_base=registry_base, config=config)
+
+    deadline = time.time() + timeout_seconds
+    latest = None
+    while time.time() < deadline:
+        try:
+            latest = client.get_lineage_status(args.request_id)
+        except RegistryUnavailableError as exc:
+            return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+        status = latest.get("status")
+        if status == "CERTIFIED":
+            break
+        time.sleep(poll_seconds)
+
+    if not latest or latest.get("status") != "CERTIFIED":
+        return _print_error(
+            stderr,
+            "timeout error",
+            "waiting for CERTIFIED status",
+            code=EXIT_TIMEOUT,
+        )
+
+    output = {
+        "request_id": args.request_id,
+        "registry_base": registry_base,
+        "status": latest.get("status"),
+        "paid_at": latest.get("paid_at"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"status: {output['status']}", file=stdout)
+    print(f"paid_at: {output['paid_at']}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_lineage_cert(*, args, config: CLIConfig, stdout, stderr) -> int:
+    registry_base = args.registry_base or config.registry_base
+    client = _build_registry_client(registry_base=registry_base, config=config)
+    try:
+        bundle = client.get_lineage_certificate(args.request_id)
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    if args.output_file:
+        output_path = Path(args.output_file)
+    else:
+        output_path = Path(config.sessions_dir) / "certificates" / f"{args.request_id}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(bundle, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+    output = {
+        "request_id": args.request_id,
+        "registry_base": registry_base,
+        "output_file": str(output_path),
+        "certificate_type": (bundle.get("certificate") or {}).get("certificate_type"),
+    }
+    if args.json:
+        print(json.dumps(output, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+    print(f"request_id: {output['request_id']}", file=stdout)
+    print(f"certificate_type: {output['certificate_type']}", file=stdout)
+    print(f"output_file: {output['output_file']}", file=stdout)
+    return EXIT_SUCCESS
+
+
 def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
     registry_public_key_b64 = args.registry_public_key_b64 or config.registry_public_key_b64
     if registry_public_key_b64 is None:
@@ -2900,6 +3117,15 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         if args.continuity_command == "cert":
             return _run_continuity_cert(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"continuity {args.continuity_command}", stdout=stdout)
+
+    if args.command == "lineage":
+        if args.lineage_command == "request":
+            return _run_lineage_request(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.lineage_command == "wait":
+            return _run_lineage_wait(args=args, config=config, stdout=stdout, stderr=stderr)
+        if args.lineage_command == "cert":
+            return _run_lineage_cert(args=args, config=config, stdout=stdout, stderr=stderr)
+        return _coming_soon(path=f"lineage {args.lineage_command}", stdout=stdout)
 
     if args.command == "flow":
         if args.flow_command == "run":
