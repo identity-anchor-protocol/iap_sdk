@@ -1685,6 +1685,18 @@ def _run_account_usage(*, args, config: CLIConfig, stdout, stderr) -> int:
         "total_used_identity_anchor": usage.get("total_used_identity_anchor"),
         "total_used_continuity": usage.get("total_used_continuity"),
         "total_used_lineage": usage.get("total_used_lineage"),
+        "entitlement_used_identity_anchor": usage.get("entitlement_used_identity_anchor"),
+        "entitlement_used_continuity": usage.get("entitlement_used_continuity"),
+        "entitlement_used_lineage": usage.get("entitlement_used_lineage"),
+        "promo_used_identity_anchor": usage.get("promo_used_identity_anchor"),
+        "promo_used_continuity": usage.get("promo_used_continuity"),
+        "promo_used_lineage": usage.get("promo_used_lineage"),
+        "paid_used_identity_anchor": usage.get("paid_used_identity_anchor"),
+        "paid_used_continuity": usage.get("paid_used_continuity"),
+        "paid_used_lineage": usage.get("paid_used_lineage"),
+        "total_issued_identity_anchor": usage.get("total_issued_identity_anchor"),
+        "total_issued_continuity": usage.get("total_issued_continuity"),
+        "total_issued_lineage": usage.get("total_issued_lineage"),
         "total_remaining_identity_anchor": usage.get("total_remaining_identity_anchor"),
         "total_remaining_continuity": usage.get("total_remaining_continuity"),
         "total_remaining_lineage": usage.get("total_remaining_lineage"),
@@ -1720,6 +1732,31 @@ def _run_account_usage(*, args, config: CLIConfig, stdout, stderr) -> int:
     print(
         "remaining_lineage: "
         f"{payload['total_remaining_lineage']}",
+        file=stdout,
+    )
+    print(
+        "total_issued_identity_anchor: "
+        f"{payload.get('total_issued_identity_anchor')}",
+        file=stdout,
+    )
+    print(
+        "total_issued_continuity: "
+        f"{payload.get('total_issued_continuity')}",
+        file=stdout,
+    )
+    print(
+        "total_issued_lineage: "
+        f"{payload.get('total_issued_lineage')}",
+        file=stdout,
+    )
+    print(
+        "promo_used_continuity: "
+        f"{payload.get('promo_used_continuity')}",
+        file=stdout,
+    )
+    print(
+        "paid_used_continuity: "
+        f"{payload.get('paid_used_continuity')}",
         file=stdout,
     )
     print(f"snapshot_file: {payload['snapshot_file']}", file=stdout)
