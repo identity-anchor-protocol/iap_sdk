@@ -88,3 +88,12 @@ def test_get_account_usage_uses_account_token_header(monkeypatch) -> None:
 
     assert result == {"linked_key_count": 1}
     assert captured["headers"] == {"x-iap-account-token": "iapt_test_token"}
+
+
+def test_retry_configuration_is_get_only_and_excludes_429() -> None:
+    client = RegistryClient(base_url="http://localhost:8080", timeout=0.1)
+    adapter = client._session.get_adapter("http://")
+    retry = adapter.max_retries
+
+    assert set(retry.allowed_methods or ()) == {"GET"}
+    assert set(retry.status_forcelist or ()) == {500, 502, 503, 504}
