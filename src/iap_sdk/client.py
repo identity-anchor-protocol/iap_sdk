@@ -35,9 +35,9 @@ class RegistryClient:
             connect=max(0, int(self.retries)),
             read=max(0, int(self.retries)),
             status=max(0, int(self.retries)),
-            status_forcelist=(429, 500, 502, 503, 504),
+            status_forcelist=(500, 502, 503, 504),
             backoff_factor=0.2,
-            allowed_methods=("GET", "POST"),
+            allowed_methods=("GET",),
             raise_on_status=False,
         )
         adapter = HTTPAdapter(max_retries=retry)
