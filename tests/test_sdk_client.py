@@ -95,5 +95,5 @@ def test_retry_configuration_is_get_only_and_excludes_429() -> None:
     adapter = client._session.get_adapter("http://")
     retry = adapter.max_retries
 
-    assert retry.allowed_methods == frozenset({"GET"})
-    assert retry.status_forcelist == frozenset({500, 502, 503, 504})
+    assert set(retry.allowed_methods or ()) == {"GET"}
+    assert set(retry.status_forcelist or ()) == {500, 502, 503, 504}
