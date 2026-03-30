@@ -1,6 +1,38 @@
 # iap-sdk
 
-Python SDK for Identity Anchor Protocol (IAP) request signing, state continuity tracking, and offline verification.
+**Identity Anchor Protocol (IAP)** gives AI agents persistent, cryptographically verifiable identities. An agent generates an Ed25519 keypair, anchors it at a public registry, and from that point every state transition is tracked in an append-only local ledger (AMCS) and can be certified by the registry. The result: you can prove — offline, to any third party — that this is the same agent as yesterday, even after restarts, migrations, or model swaps.
+
+This SDK provides request signing, state continuity tracking, and offline certificate verification.
+
+**Website & docs:** [identityanchorprotocol.com](https://www.identityanchorprotocol.com)
+
+> **Beta — free to try.** The registry is live. During beta, all certificate operations are free (no account required). See [Try it now](#try-it-now) below.
+
+## Try it now
+
+No account needed. Two ways to get started:
+
+### Option 1: Tamper-detection demo (2 minutes, fully offline)
+
+```bash
+git clone https://github.com/identity-anchor-protocol/iap_sdk.git
+cd iap_sdk
+pip install -e ".[dev]"
+python examples/state-drift-demo/demo.py
+```
+
+You'll see `verify_before_ok=True`, then a simulated tamper, then `verify_after_ok=False`. That's the core idea: once state history is modified, verification fails.
+
+### Option 2: Full flow — anchor an identity and get a real certificate
+
+```bash
+pip install iap-agent
+iap init --project-local
+iap anchor --registry-base https://registry.ia-protocol.com
+iap commit "my first state commit" --registry-base https://registry.ia-protocol.com
+```
+
+That creates a keypair, registers it at the public registry, and issues your first continuity certificate. The certificate is a signed JSON file you can verify offline.
 
 ## Install
 
@@ -160,6 +192,7 @@ or key rotation.
 If you hit a bug, an upgrade issue, or have recommendations for improvement, contact:
 
 - `admin@ia-protocol.com`
+- [identityanchorprotocol.com](https://www.identityanchorprotocol.com)
 
 ## Docs
 

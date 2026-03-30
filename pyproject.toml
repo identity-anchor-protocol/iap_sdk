@@ -11,8 +11,7 @@ requires-python = ">=3.10"
 authors = [
   {name = "Identity Anchor Protocol"},
 ]
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+license = {text = "Apache-2.0"}
 keywords = ["iap", "identity", "continuity", "ed25519", "agent"]
 classifiers = [
   "Development Status :: 4 - Beta",
