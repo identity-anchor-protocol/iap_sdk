@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from typing import Sequence
 from uuid import uuid4
 
+from iap_sdk.actions import summarize_action_chain, verify_action_chain
 from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, append_files_to_amcs, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config, save_cli_setting
@@ -36,7 +37,7 @@ from iap_sdk.cli.tracking import (
     load_track_config,
 )
 from iap_sdk.client import RegistryClient
-from iap_sdk.errors import RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
+from iap_sdk.errors import ActionLogIntegrityError, RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
 from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import (
     build_continuity_request,
@@ -134,6 +135,33 @@ def _build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--identity-file", default=None)
     commit.add_argument("--amcs-db", default=None, help="Path to local AMCS SQLite DB")
     commit.add_argument("--json", action="store_true")
+
+    actions = sub.add_parser("actions", help="Inspect and verify local action provenance")
+    actions_sub = actions.add_subparsers(dest="actions_command", required=True)
+    actions_status = actions_sub.add_parser("status", help="Show latest local action chain status")
+    actions_status.add_argument(
+        "--actions-dir",
+        default=None,
+        help="Path to local action log directory (default: ./.iap/actions)",
+    )
+    actions_status.add_argument("--json", action="store_true", help="Print status as JSON")
+    actions_verify = actions_sub.add_parser("verify", help="Verify local action chain integrity")
+    actions_verify.add_argument(
+        "--actions-dir",
+        default=None,
+        help="Path to local action log directory (default: ./.iap/actions)",
+    )
+    actions_verify.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    actions_verify.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
+    actions_verify.add_argument("--json", action="store_true", help="Print verification result as JSON")
 
     setup = sub.add_parser("setup", help="Bootstrap registry access settings in one command")
     setup_registry_base_group = setup.add_mutually_exclusive_group()
@@ -845,6 +873,12 @@ def _coming_soon(*, path: str, stdout) -> int:
     return EXIT_NETWORK_ERROR
 
 
+def _resolve_actions_dir(args) -> Path:
+    if getattr(args, "actions_dir", None):
+        return Path(args.actions_dir)
+    return Path.cwd() / ".iap" / "actions"
+
+
 def _run_init(*, args, stdout, stderr) -> int:
     identity_file = args.identity_file
     if args.project_local:
@@ -1030,6 +1064,85 @@ def _run_commit(*, args, config: CLIConfig, stdout, stderr) -> int:
     print(f"sequence: {output['sequence']}", file=stdout)
     print(f"memory_root: {output['memory_root']}", file=stdout)
     return EXIT_SUCCESS
+
+
+def _run_actions_status(*, args, stdout, stderr) -> int:
+    actions_dir = _resolve_actions_dir(args)
+    try:
+        summary = summarize_action_chain(actions_dir)
+    except ActionLogIntegrityError as exc:
+        return _print_error(stderr, "actions error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    payload = {
+        "actions_dir": str(actions_dir),
+        "exists": summary.exists,
+        "event_count": summary.event_count,
+        "latest_sequence": summary.latest_sequence,
+        "latest_event_hash": summary.latest_event_hash,
+        "latest_context_root": summary.latest_context_root,
+        "agent_id": summary.agent_id,
+        "index_present": summary.index_present,
+        "index_consistent": summary.index_consistent,
+        "receipts_present": summary.receipts_present,
+        "artifacts_present": summary.artifacts_present,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"actions_dir: {payload['actions_dir']}", file=stdout)
+    print(f"event_count: {payload['event_count']}", file=stdout)
+    print(f"latest_sequence: {payload['latest_sequence']}", file=stdout)
+    print(f"latest_event_hash: {payload['latest_event_hash']}", file=stdout)
+    print(f"latest_context_root: {payload['latest_context_root']}", file=stdout)
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"index_present: {str(payload['index_present']).lower()}", file=stdout)
+    print(f"index_consistent: {str(payload['index_consistent']).lower()}", file=stdout)
+    print(f"receipts_present: {str(payload['receipts_present']).lower()}", file=stdout)
+    print(f"artifacts_present: {str(payload['artifacts_present']).lower()}", file=stdout)
+    return EXIT_SUCCESS
+
+
+def _run_actions_verify(*, args, stdout, stderr) -> int:
+    actions_dir = _resolve_actions_dir(args)
+    try:
+        identity_target = _resolve_upgrade_identity_path(args)
+        identity, identity_path = load_identity(identity_target)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    result = verify_action_chain(
+        actions_dir,
+        public_key_bytes=identity.public_key_bytes,
+        expected_agent_id=identity.agent_id,
+    )
+    payload = {
+        "ok": result.ok,
+        "reason": result.reason,
+        "actions_dir": str(actions_dir),
+        "identity_path": str(identity_path),
+        "agent_id": result.agent_id,
+        "event_count": result.event_count,
+        "latest_sequence": result.latest_sequence,
+        "latest_event_hash": result.latest_event_hash,
+        "latest_context_root": result.latest_context_root,
+        "signatures_verified": result.signatures_verified,
+        "index_consistent": result.index_consistent,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+    else:
+        if result.ok and result.event_count == 0:
+            print("Action chain verified ✓", file=stdout)
+            print("No local actions recorded yet.", file=stdout)
+        elif result.ok:
+            print("Action chain verified ✓", file=stdout)
+            print(f"Verified {result.signatures_verified} action signatures.", file=stdout)
+            print(f"Latest sequence: {result.latest_sequence}", file=stdout)
+            print(f"Latest event hash: {result.latest_event_hash}", file=stdout)
+        else:
+            print(result.reason, file=stdout)
+    return EXIT_SUCCESS if result.ok else EXIT_VERIFICATION_FAILED
 
 
 def _project_local_identity_path() -> Path:
@@ -3095,6 +3208,13 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
 
     if args.command == "commit":
         return _run_commit(args=args, config=config, stdout=stdout, stderr=stderr)
+
+    if args.command == "actions":
+        if args.actions_command == "status":
+            return _run_actions_status(args=args, stdout=stdout, stderr=stderr)
+        if args.actions_command == "verify":
+            return _run_actions_verify(args=args, stdout=stdout, stderr=stderr)
+        return _coming_soon(path=f"actions {args.actions_command}", stdout=stdout)
 
     if args.command == "registry":
         if args.registry_command == "status":
