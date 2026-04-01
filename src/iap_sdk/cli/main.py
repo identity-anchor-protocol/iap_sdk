@@ -172,6 +172,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print verification result as JSON",
     )
+    actions_verify.add_argument(
+        "--registry-public-key-b64",
+        default=None,
+        help="Pinned registry public key for verifying local receipt signatures",
+    )
     actions_flush = actions_sub.add_parser(
         "flush",
         help="Submit local action receipts to the registry and store signed receipts locally",
@@ -1114,7 +1119,7 @@ def _run_actions_status(*, args, stdout, stderr) -> int:
     actions_dir = _resolve_actions_dir(args)
     try:
         summary = summarize_action_chain(actions_dir)
-    except ActionLogIntegrityError as exc:
+    except (ActionLogIntegrityError, ActionReceiptError) as exc:
         return _print_error(stderr, "actions error", str(exc), code=EXIT_VALIDATION_ERROR)
 
     payload = {
@@ -1128,6 +1133,13 @@ def _run_actions_status(*, args, stdout, stderr) -> int:
         "index_present": summary.index_present,
         "index_consistent": summary.index_consistent,
         "receipts_present": summary.receipts_present,
+        "receipt_count": summary.receipt_count,
+        "latest_receipt_sequence": summary.latest_receipt_sequence,
+        "latest_receipt_event_hash": summary.latest_receipt_event_hash,
+        "latest_registry_id": summary.latest_registry_id,
+        "receipt_log_consistent": summary.receipt_log_consistent,
+        "receipt_coverage_complete": summary.receipt_coverage_complete,
+        "fork_detected_count": summary.fork_detected_count,
         "artifacts_present": summary.artifacts_present,
     }
     if args.json:
@@ -1143,11 +1155,24 @@ def _run_actions_status(*, args, stdout, stderr) -> int:
     print(f"index_present: {str(payload['index_present']).lower()}", file=stdout)
     print(f"index_consistent: {str(payload['index_consistent']).lower()}", file=stdout)
     print(f"receipts_present: {str(payload['receipts_present']).lower()}", file=stdout)
+    print(f"receipt_count: {payload['receipt_count']}", file=stdout)
+    print(f"latest_receipt_sequence: {payload['latest_receipt_sequence']}", file=stdout)
+    print(f"latest_receipt_event_hash: {payload['latest_receipt_event_hash']}", file=stdout)
+    print(f"latest_registry_id: {payload['latest_registry_id']}", file=stdout)
+    print(
+        f"receipt_log_consistent: {str(payload['receipt_log_consistent']).lower()}",
+        file=stdout,
+    )
+    print(
+        f"receipt_coverage_complete: {str(payload['receipt_coverage_complete']).lower()}",
+        file=stdout,
+    )
+    print(f"fork_detected_count: {payload['fork_detected_count']}", file=stdout)
     print(f"artifacts_present: {str(payload['artifacts_present']).lower()}", file=stdout)
     return EXIT_SUCCESS
 
 
-def _run_actions_verify(*, args, stdout, stderr) -> int:
+def _run_actions_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
     actions_dir = _resolve_actions_dir(args)
     try:
         identity_target = _resolve_upgrade_identity_path(args)
@@ -1155,16 +1180,25 @@ def _run_actions_verify(*, args, stdout, stderr) -> int:
     except IdentityError as exc:
         return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
 
+    registry_public_key_b64 = args.registry_public_key_b64 or config.registry_public_key_b64
+    registry_key_source = None
+    if args.registry_public_key_b64:
+        registry_key_source = "argument"
+    elif config.registry_public_key_b64:
+        registry_key_source = "config"
+
     result = verify_action_chain(
         actions_dir,
         public_key_bytes=identity.public_key_bytes,
         expected_agent_id=identity.agent_id,
+        registry_public_key_b64=registry_public_key_b64,
     )
     payload = {
         "ok": result.ok,
         "reason": result.reason,
         "actions_dir": str(actions_dir),
         "identity_path": str(identity_path),
+        "registry_public_key_source": registry_key_source,
         "agent_id": result.agent_id,
         "event_count": result.event_count,
         "latest_sequence": result.latest_sequence,
@@ -1172,6 +1206,14 @@ def _run_actions_verify(*, args, stdout, stderr) -> int:
         "latest_context_root": result.latest_context_root,
         "signatures_verified": result.signatures_verified,
         "index_consistent": result.index_consistent,
+        "receipt_count": result.receipt_count,
+        "latest_receipt_sequence": result.latest_receipt_sequence,
+        "latest_receipt_event_hash": result.latest_receipt_event_hash,
+        "latest_registry_id": result.latest_registry_id,
+        "receipt_log_consistent": result.receipt_log_consistent,
+        "receipt_coverage_complete": result.receipt_coverage_complete,
+        "fork_detected_count": result.fork_detected_count,
+        "receipt_signatures_verified": result.receipt_signatures_verified,
     }
     if args.json:
         print(json.dumps(payload, sort_keys=True), file=stdout)
@@ -1182,6 +1224,18 @@ def _run_actions_verify(*, args, stdout, stderr) -> int:
         elif result.ok:
             print("Action chain verified ✓", file=stdout)
             print(f"Verified {result.signatures_verified} action signatures.", file=stdout)
+            if result.receipt_count > 0:
+                if result.receipt_signatures_verified > 0:
+                    print(
+                        f"Verified {result.receipt_signatures_verified} receipt signatures.",
+                        file=stdout,
+                    )
+                print(
+                    "Receipt coverage complete."
+                    if result.receipt_coverage_complete
+                    else "Receipt coverage is partial.",
+                    file=stdout,
+                )
             print(f"Latest sequence: {result.latest_sequence}", file=stdout)
             print(f"Latest event hash: {result.latest_event_hash}", file=stdout)
         else:
@@ -3334,7 +3388,7 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
         if args.actions_command == "status":
             return _run_actions_status(args=args, stdout=stdout, stderr=stderr)
         if args.actions_command == "verify":
-            return _run_actions_verify(args=args, stdout=stdout, stderr=stderr)
+            return _run_actions_verify(args=args, config=config, stdout=stdout, stderr=stderr)
         if args.actions_command == "flush":
             return _run_actions_flush(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"actions {args.actions_command}", stdout=stdout)

@@ -155,6 +155,32 @@ class ActionReceiptFlushResult:
     registry_public_key_source: str | None
 
 
+@dataclass(frozen=True)
+class ActionReceiptSummary:
+    receipt_count: int
+    latest_receipt_sequence: int | None
+    latest_receipt_event_hash: str | None
+    latest_registry_id: str | None
+    receipt_log_consistent: bool
+    receipt_coverage_complete: bool
+    fork_detected_count: int
+    consistency_reason: str | None
+
+
+@dataclass(frozen=True)
+class ActionReceiptVerificationResult:
+    ok: bool
+    reason: str
+    receipt_count: int
+    latest_receipt_sequence: int | None
+    latest_receipt_event_hash: str | None
+    latest_registry_id: str | None
+    receipt_log_consistent: bool
+    receipt_coverage_complete: bool
+    fork_detected_count: int
+    receipt_signatures_verified: int
+
+
 class ActionReceiptStore:
     """Append-only local storage for signed registry action receipts."""
 
@@ -244,6 +270,115 @@ def verify_action_receipt_signature(
     if not verify_ed25519(signature, canonical, public_key):
         return False, "invalid registry signature"
     return True, "ok"
+
+
+def summarize_action_receipts(base_dir: str | Path) -> ActionReceiptSummary:
+    action_store = ActionLogStore(base_dir)
+    action_store.replay()
+    events = action_store.read_events()
+    receipt_store = ActionReceiptStore(base_dir)
+    receipts = receipt_store.read_receipts()
+    reason = _check_receipt_log_consistency(events, receipts)
+    latest_receipt = receipts[-1] if receipts else None
+    return ActionReceiptSummary(
+        receipt_count=len(receipts),
+        latest_receipt_sequence=(
+            latest_receipt.sequence if latest_receipt is not None else None
+        ),
+        latest_receipt_event_hash=(
+            latest_receipt.event_hash if latest_receipt is not None else None
+        ),
+        latest_registry_id=(latest_receipt.registry_id if latest_receipt is not None else None),
+        receipt_log_consistent=reason is None,
+        receipt_coverage_complete=_receipt_coverage_complete(events, receipts),
+        fork_detected_count=sum(1 for receipt in receipts if receipt.fork_detected),
+        consistency_reason=reason,
+    )
+
+
+def verify_action_receipts(
+    base_dir: str | Path,
+    *,
+    registry_public_key_b64: str | None = None,
+    expected_agent_id: str | None = None,
+) -> ActionReceiptVerificationResult:
+    try:
+        action_store = ActionLogStore(base_dir)
+        action_store.replay()
+        events = action_store.read_events()
+        receipt_store = ActionReceiptStore(base_dir)
+        receipts = receipt_store.read_receipts()
+    except ActionReceiptError as exc:
+        return ActionReceiptVerificationResult(
+            ok=False,
+            reason=str(exc),
+            receipt_count=0,
+            latest_receipt_sequence=None,
+            latest_receipt_event_hash=None,
+            latest_registry_id=None,
+            receipt_log_consistent=False,
+            receipt_coverage_complete=False,
+            fork_detected_count=0,
+            receipt_signatures_verified=0,
+        )
+
+    latest_receipt = receipts[-1] if receipts else None
+    reason = _check_receipt_log_consistency(events, receipts, expected_agent_id=expected_agent_id)
+    summary = ActionReceiptVerificationResult(
+        ok=reason is None,
+        reason=reason or ("no local receipts recorded" if not receipts else "ok"),
+        receipt_count=len(receipts),
+        latest_receipt_sequence=(
+            latest_receipt.sequence if latest_receipt is not None else None
+        ),
+        latest_receipt_event_hash=(
+            latest_receipt.event_hash if latest_receipt is not None else None
+        ),
+        latest_registry_id=(latest_receipt.registry_id if latest_receipt is not None else None),
+        receipt_log_consistent=reason is None,
+        receipt_coverage_complete=_receipt_coverage_complete(events, receipts),
+        fork_detected_count=sum(1 for receipt in receipts if receipt.fork_detected),
+        receipt_signatures_verified=0,
+    )
+    if reason is not None or registry_public_key_b64 is None:
+        return summary
+
+    signatures_verified = 0
+    for receipt in receipts:
+        valid, verification_reason = verify_action_receipt_signature(
+            receipt.model_dump(exclude_none=True),
+            registry_public_key_b64=registry_public_key_b64,
+        )
+        if not valid:
+            return ActionReceiptVerificationResult(
+                ok=False,
+                reason=(
+                    f"invalid receipt signature at sequence {receipt.sequence}: "
+                    f"{verification_reason}"
+                ),
+                receipt_count=summary.receipt_count,
+                latest_receipt_sequence=summary.latest_receipt_sequence,
+                latest_receipt_event_hash=summary.latest_receipt_event_hash,
+                latest_registry_id=summary.latest_registry_id,
+                receipt_log_consistent=True,
+                receipt_coverage_complete=summary.receipt_coverage_complete,
+                fork_detected_count=summary.fork_detected_count,
+                receipt_signatures_verified=signatures_verified,
+            )
+        signatures_verified += 1
+
+    return ActionReceiptVerificationResult(
+        ok=True,
+        reason=summary.reason,
+        receipt_count=summary.receipt_count,
+        latest_receipt_sequence=summary.latest_receipt_sequence,
+        latest_receipt_event_hash=summary.latest_receipt_event_hash,
+        latest_registry_id=summary.latest_registry_id,
+        receipt_log_consistent=True,
+        receipt_coverage_complete=summary.receipt_coverage_complete,
+        fork_detected_count=summary.fork_detected_count,
+        receipt_signatures_verified=signatures_verified,
+    )
 
 
 def flush_action_receipts(
@@ -381,6 +516,73 @@ def flush_action_receipts(
     )
 
 
+def _check_receipt_log_consistency(
+    events: list[Any],
+    receipts: list[ActionReceipt],
+    *,
+    expected_agent_id: str | None = None,
+) -> str | None:
+    if not receipts:
+        return None
+    if not events:
+        return "receipts.log exists but the local action log is empty"
+
+    previous_sequence: int | None = None
+    previous_agent_id: str | None = None
+    seen_sequences: set[int] = set()
+
+    for receipt in receipts:
+        if expected_agent_id is not None and receipt.agent_id != expected_agent_id:
+            return "receipt log contains unexpected agent_id"
+        if previous_agent_id is not None and receipt.agent_id != previous_agent_id:
+            return "receipt log contains multiple agent_ids"
+        previous_agent_id = receipt.agent_id
+        if previous_sequence is not None and receipt.sequence <= previous_sequence:
+            return "receipts.log has non-monotonic sequence ordering"
+        if receipt.sequence in seen_sequences:
+            return "receipts.log contains duplicate sequences"
+        seen_sequences.add(receipt.sequence)
+        previous_sequence = receipt.sequence
+        if receipt.sequence > len(events):
+            return "receipts.log references a sequence beyond the local action log"
+
+        event = events[receipt.sequence - 1]
+        event_payload = event.model_dump(exclude_none=True)
+        if receipt.agent_id != event.agent_id:
+            return f"receipt sequence {receipt.sequence} agent_id does not match local action log"
+        if receipt.prev_event_hash != event.prev_event_hash:
+            return (
+                f"receipt sequence {receipt.sequence} prev_event_hash does not match "
+                "local action log"
+            )
+        if receipt.event_hash != action_event_hash(event_payload):
+            return f"receipt sequence {receipt.sequence} event_hash does not match local action log"
+        if receipt.context_root != event.context_root:
+            return (
+                f"receipt sequence {receipt.sequence} context_root does not match "
+                "local action log"
+            )
+        if receipt.timestamp_utc != event.timestamp_utc:
+            return (
+                f"receipt sequence {receipt.sequence} timestamp_utc does not match "
+                "local action log"
+            )
+        if receipt.action_kind != event.action_kind:
+            return (
+                f"receipt sequence {receipt.sequence} action_kind does not match "
+                "local action log"
+            )
+
+    return None
+
+
+def _receipt_coverage_complete(events: list[Any], receipts: list[ActionReceipt]) -> bool:
+    if not events:
+        return True
+    receipt_sequences = {receipt.sequence for receipt in receipts}
+    return receipt_sequences == set(range(1, len(events) + 1))
+
+
 def _chmod_owner_only(path: Path) -> None:
     try:
         path.chmod(0o600)
@@ -389,11 +591,15 @@ def _chmod_owner_only(path: Path) -> None:
 
 
 __all__ = [
+    "ActionReceiptSummary",
+    "ActionReceiptVerificationResult",
     "ActionReceipt",
     "ActionReceiptFlushResult",
     "ActionReceiptLatest",
     "ActionReceiptStore",
     "canonical_action_receipt_bytes",
     "flush_action_receipts",
+    "summarize_action_receipts",
+    "verify_action_receipts",
     "verify_action_receipt_signature",
 ]
