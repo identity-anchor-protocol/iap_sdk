@@ -22,6 +22,15 @@ from iap_sdk.actions.operator import (
     default_state_root_path,
     resolve_context_root,
 )
+from iap_sdk.actions.receipts import (
+    ActionReceipt,
+    ActionReceiptFlushResult,
+    ActionReceiptLatest,
+    ActionReceiptStore,
+    canonical_action_receipt_bytes,
+    flush_action_receipts,
+    verify_action_receipt_signature,
+)
 from iap_sdk.actions.verify import (
     ActionChainSummary,
     ActionChainVerificationResult,
@@ -48,6 +57,13 @@ __all__ = [
     "default_project_identity_path",
     "default_state_root_path",
     "resolve_context_root",
+    "ActionReceipt",
+    "ActionReceiptFlushResult",
+    "ActionReceiptLatest",
+    "ActionReceiptStore",
+    "canonical_action_receipt_bytes",
+    "flush_action_receipts",
+    "verify_action_receipt_signature",
     "ActionChainSummary",
     "ActionChainVerificationResult",
     "summarize_action_chain",

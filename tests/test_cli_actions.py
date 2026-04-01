@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import base64
 import io
 import json
 
-from iap_sdk.actions import IAPOperator
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
+
+from iap_sdk.actions import IAPOperator, action_event_hash, canonical_action_receipt_bytes
+from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.main import main
 
 
@@ -15,6 +25,62 @@ def _set_state_root_memory_root(project_root, memory_root: str) -> None:
         json.dumps(payload, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def _b64(value: bytes) -> str:
+    return base64.b64encode(value).decode("ascii")
+
+
+class _FakeRegistryClient:
+    def __init__(self) -> None:
+        private = Ed25519PrivateKey.generate()
+        self._private_key = private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+        self.public_key_b64 = _b64(
+            private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        )
+        self.latest_receipt: dict | None = None
+
+    def get_public_registry_key(self) -> dict:
+        return {"public_key_b64": self.public_key_b64}
+
+    def get_latest_action_receipt(self, agent_id: str) -> dict:
+        if self.latest_receipt is None:
+            return {
+                "agent_id": agent_id,
+                "latest_sequence": None,
+                "latest_event_hash": None,
+                "latest_receipt": None,
+            }
+        return {
+            "agent_id": agent_id,
+            "latest_sequence": self.latest_receipt["sequence"],
+            "latest_event_hash": self.latest_receipt["event_hash"],
+            "latest_receipt": self.latest_receipt,
+        }
+
+    def submit_action_receipt(self, payload: dict) -> dict:
+        event = payload["event"]
+        receipt = {
+            "receipt_id": f"receipt-{event['sequence']}",
+            "agent_id": event["agent_id"],
+            "sequence": event["sequence"],
+            "prev_event_hash": event["prev_event_hash"],
+            "event_hash": action_event_hash(event),
+            "context_root": event["context_root"],
+            "timestamp_utc": event["timestamp_utc"],
+            "server_timestamp_utc": "2026-04-01T00:00:00Z",
+            "action_kind": event["action_kind"],
+            "fork_detected": False,
+            "conflicting_event_hashes": [],
+            "registry_id": "test-registry",
+            "protocol_version": PROTOCOL_VERSION,
+        }
+        signature = Ed25519PrivateKey.from_private_bytes(self._private_key).sign(
+            canonical_action_receipt_bytes(receipt)
+        )
+        receipt["registry_signature_b64"] = _b64(signature)
+        self.latest_receipt = receipt
+        return receipt
 
 
 def test_actions_status_json_reports_latest_event(tmp_path, monkeypatch) -> None:
@@ -86,3 +152,29 @@ def test_actions_verify_returns_exit_4_when_log_is_tampered(tmp_path, monkeypatc
 
     assert rc == 4
     assert "index.json does not match replayed action log" in out.getvalue()
+
+
+def test_actions_flush_json_submits_receipts(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    init_out = io.StringIO()
+    init_err = io.StringIO()
+    assert main(["init", "--project-local", "--json"], stdout=init_out, stderr=init_err) == 0
+    _set_state_root_memory_root(tmp_path, "d" * 64)
+
+    operator = IAPOperator.from_project(project_root=tmp_path)
+    operator.file_write(tmp_path / "note.txt", "hello")
+
+    fake_client = _FakeRegistryClient()
+    monkeypatch.setattr("iap_sdk.cli.main._build_registry_client", lambda **_: fake_client)
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(["actions", "flush", "--project-local", "--json"], stdout=out, stderr=err)
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["submitted_count"] == 1
+    assert payload["latest_registry_sequence"] == 1
+    assert payload["registry_public_key_source"] == "registry"
+    assert (tmp_path / ".iap" / "actions" / "receipts.log").exists()

@@ -90,6 +90,39 @@ def test_get_account_usage_uses_account_token_header(monkeypatch) -> None:
     assert captured["headers"] == {"x-iap-account-token": "iapt_test_token"}
 
 
+def test_submit_action_receipt_uses_expected_path(monkeypatch) -> None:
+    client = RegistryClient(base_url="http://localhost:8080", timeout=0.1)
+    captured: list[tuple[str, str, dict | None]] = []
+
+    def fake_request(method, path, *, json_payload=None):  # noqa: ANN001
+        captured.append((method, path, json_payload))
+        return {"receipt_id": "receipt-1"}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    payload = {"agent_public_key_b64": "abc", "event": {"sequence": 1}}
+    result = client.submit_action_receipt(payload)
+
+    assert result == {"receipt_id": "receipt-1"}
+    assert captured == [("POST", "/v1/actions", payload)]
+
+
+def test_get_latest_action_receipt_uses_expected_path(monkeypatch) -> None:
+    client = RegistryClient(base_url="http://localhost:8080", timeout=0.1)
+    captured: list[str] = []
+
+    def fake_request(method, path, *, json_payload=None):  # noqa: ANN001, ARG001
+        captured.append(f"{method} {path}")
+        return {"agent_id": "ed25519:test", "latest_sequence": None}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    result = client.get_latest_action_receipt("ed25519:test")
+
+    assert result == {"agent_id": "ed25519:test", "latest_sequence": None}
+    assert captured == ["GET /v1/actions/latest?agent_id=ed25519:test"]
+
+
 def test_retry_configuration_is_get_only_and_excludes_429() -> None:
     client = RegistryClient(base_url="http://localhost:8080", timeout=0.1)
     adapter = client._session.get_adapter("http://")

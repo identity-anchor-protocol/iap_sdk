@@ -376,6 +376,30 @@ class ActionLogStore:
             latest_event_hash=latest_event_hash,
         )
 
+    def read_events(self) -> list[ActionEvent]:
+        if not self.log_path.exists():
+            return []
+
+        models: list[ActionEvent] = []
+        for line_number, raw_line in enumerate(
+            self.log_path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ActionLogIntegrityError(
+                    f"actions.log line {line_number} is not valid JSON"
+                ) from exc
+            try:
+                models.append(ActionEvent.model_validate(payload))
+            except ValidationError as exc:
+                raise ActionLogIntegrityError(f"actions.log line {line_number} is invalid") from exc
+        return models
+
     def append(self, payload: dict[str, Any]) -> ActionLogState:
         model = _validate_action_event(payload)
         if not model.signature:

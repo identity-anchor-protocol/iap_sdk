@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import Sequence
 from uuid import uuid4
 
-from iap_sdk.actions import summarize_action_chain, verify_action_chain
+from iap_sdk.actions import flush_action_receipts, summarize_action_chain, verify_action_chain
 from iap_sdk.certificates import PROTOCOL_VERSION
 from iap_sdk.cli.amcs import AMCSError, append_files_to_amcs, get_amcs_root
 from iap_sdk.cli.config import CLIConfig, ConfigError, load_cli_config, save_cli_setting
@@ -39,6 +39,7 @@ from iap_sdk.cli.tracking import (
 from iap_sdk.client import RegistryClient
 from iap_sdk.errors import (
     ActionLogIntegrityError,
+    ActionReceiptError,
     RegistryRequestError,
     RegistryUnavailableError,
     SDKTimeoutError,
@@ -170,6 +171,40 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Print verification result as JSON",
+    )
+    actions_flush = actions_sub.add_parser(
+        "flush",
+        help="Submit local action receipts to the registry and store signed receipts locally",
+    )
+    actions_flush.add_argument(
+        "--actions-dir",
+        default=None,
+        help="Path to local action log directory (default: ./.iap/actions)",
+    )
+    actions_flush.add_argument(
+        "--identity-file",
+        default=None,
+        help="Path to local identity file (default: ~/.iap_agent/identity/ed25519.json)",
+    )
+    actions_flush.add_argument(
+        "--project-local",
+        action="store_true",
+        help="Prefer ./.iap/identity/ed25519.json for this project",
+    )
+    actions_flush.add_argument(
+        "--registry-base",
+        default=None,
+        help="Registry base URL override (default from config)",
+    )
+    actions_flush.add_argument(
+        "--registry-public-key-b64",
+        default=None,
+        help="Pinned registry public key override for receipt verification",
+    )
+    actions_flush.add_argument(
+        "--json",
+        action="store_true",
+        help="Print flush result as JSON",
     )
 
     setup = sub.add_parser("setup", help="Bootstrap registry access settings in one command")
@@ -1154,6 +1189,70 @@ def _run_actions_verify(*, args, stdout, stderr) -> int:
     return EXIT_SUCCESS if result.ok else EXIT_VERIFICATION_FAILED
 
 
+def _run_actions_flush(*, args, config: CLIConfig, stdout, stderr) -> int:
+    actions_dir = _resolve_actions_dir(args)
+    try:
+        identity_target = _resolve_upgrade_identity_path(args)
+        identity, identity_path = load_identity(identity_target)
+    except IdentityError as exc:
+        return _print_error(stderr, "identity error", str(exc), code=EXIT_VALIDATION_ERROR)
+
+    registry_base = args.registry_base or config.registry_base
+    client = _build_registry_client(registry_base=registry_base, config=config)
+    try:
+        registry_public_key_b64, key_source = _resolve_registry_public_key_b64(
+            args_key=args.registry_public_key_b64,
+            config=config,
+            client=client,
+        )
+        result = flush_action_receipts(
+            actions_dir,
+            client=client,
+            agent_public_key_b64=identity.public_key_b64,
+            registry_public_key_b64=registry_public_key_b64,
+        )
+    except ActionLogIntegrityError as exc:
+        return _print_error(stderr, "actions error", str(exc), code=EXIT_VALIDATION_ERROR)
+    except ActionReceiptError as exc:
+        return _print_error(stderr, "actions error", str(exc), code=EXIT_VALIDATION_ERROR)
+    except RegistryRequestError as exc:
+        return _print_registry_request_error(stderr, exc, code=EXIT_NETWORK_ERROR)
+    except RegistryUnavailableError as exc:
+        return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
+
+    payload = {
+        "actions_dir": str(actions_dir),
+        "identity_path": str(identity_path),
+        "registry_base": registry_base,
+        "registry_public_key_source": key_source,
+        "agent_id": result.agent_id,
+        "event_count": result.event_count,
+        "submitted_count": result.submitted_count,
+        "skipped_local_receipts": result.skipped_local_receipts,
+        "skipped_registry_existing": result.skipped_registry_existing,
+        "latest_registry_sequence": result.latest_registry_sequence,
+        "latest_registry_event_hash": result.latest_registry_event_hash,
+        "fork_detected_count": result.fork_detected_count,
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True), file=stdout)
+        return EXIT_SUCCESS
+
+    print(f"actions_dir: {payload['actions_dir']}", file=stdout)
+    print(f"identity_path: {payload['identity_path']}", file=stdout)
+    print(f"registry_base: {payload['registry_base']}", file=stdout)
+    print(f"registry_public_key_source: {payload['registry_public_key_source']}", file=stdout)
+    print(f"agent_id: {payload['agent_id']}", file=stdout)
+    print(f"event_count: {payload['event_count']}", file=stdout)
+    print(f"submitted_count: {payload['submitted_count']}", file=stdout)
+    print(f"skipped_local_receipts: {payload['skipped_local_receipts']}", file=stdout)
+    print(f"skipped_registry_existing: {payload['skipped_registry_existing']}", file=stdout)
+    print(f"latest_registry_sequence: {payload['latest_registry_sequence']}", file=stdout)
+    print(f"latest_registry_event_hash: {payload['latest_registry_event_hash']}", file=stdout)
+    print(f"fork_detected_count: {payload['fork_detected_count']}", file=stdout)
+    return EXIT_SUCCESS
+
+
 def _project_local_identity_path() -> Path:
     return Path.cwd() / ".iap" / "identity" / "ed25519.json"
 
@@ -1357,6 +1456,23 @@ def _build_registry_client(*, registry_base: str, config: CLIConfig) -> Registry
     if config.account_token:
         kwargs["account_token"] = config.account_token
     return RegistryClient(**kwargs)
+
+
+def _resolve_registry_public_key_b64(
+    *,
+    args_key: str | None,
+    config: CLIConfig,
+    client: RegistryClient,
+) -> tuple[str, str]:
+    if args_key:
+        return args_key, "argument"
+    if config.registry_public_key_b64:
+        return config.registry_public_key_b64, "config"
+    key_payload = client.get_public_registry_key()
+    registry_public_key_b64 = key_payload.get("public_key_b64")
+    if not isinstance(registry_public_key_b64, str) or not registry_public_key_b64:
+        raise RegistryUnavailableError("missing public_key_b64 in registry response")
+    return registry_public_key_b64, "registry"
 
 
 def _write_account_usage_snapshot(*, config: CLIConfig, payload: dict) -> Path:
@@ -2921,17 +3037,13 @@ def _run_verify(*, args, config: CLIConfig, stdout, stderr) -> int:
         registry_base = args.registry_base or config.registry_base
         client = _build_registry_client(registry_base=registry_base, config=config)
         try:
-            key_payload = client.get_public_registry_key()
+            registry_public_key_b64, _ = _resolve_registry_public_key_b64(
+                args_key=None,
+                config=config,
+                client=client,
+            )
         except RegistryUnavailableError as exc:
             return _print_error(stderr, "registry error", str(exc), code=EXIT_NETWORK_ERROR)
-        registry_public_key_b64 = key_payload.get("public_key_b64")
-        if not isinstance(registry_public_key_b64, str) or not registry_public_key_b64:
-            return _print_error(
-                stderr,
-                "registry error",
-                "missing public_key_b64 in registry response",
-                code=EXIT_NETWORK_ERROR,
-            )
 
     witnesses = None
     if args.witness_bundle:
@@ -3223,6 +3335,8 @@ def main(argv: Sequence[str] | None = None, *, stdout=sys.stdout, stderr=sys.std
             return _run_actions_status(args=args, stdout=stdout, stderr=stderr)
         if args.actions_command == "verify":
             return _run_actions_verify(args=args, stdout=stdout, stderr=stderr)
+        if args.actions_command == "flush":
+            return _run_actions_flush(args=args, config=config, stdout=stdout, stderr=stderr)
         return _coming_soon(path=f"actions {args.actions_command}", stdout=stdout)
 
     if args.command == "registry":

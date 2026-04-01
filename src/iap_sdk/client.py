@@ -154,6 +154,12 @@ class RegistryClient:
     def get_registry_info(self) -> dict:
         return self._request("GET", "/v1/registry/info")
 
+    def submit_action_receipt(self, payload: dict) -> dict:
+        return self._request("POST", "/v1/actions", json_payload=payload)
+
+    def get_latest_action_receipt(self, agent_id: str) -> dict:
+        return self._request("GET", f"/v1/actions/latest?agent_id={agent_id}")
+
     def get_agent_registry_status(self, agent_id: str) -> dict:
         return self._request("GET", f"/v1/registry/agents/{agent_id}/status")
 

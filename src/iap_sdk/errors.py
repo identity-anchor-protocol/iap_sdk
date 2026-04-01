@@ -72,3 +72,7 @@ class ActionContextError(IAPSDKError):
 
 class ActionIdentityError(IAPSDKError):
     """Action logger identity material is missing or inconsistent."""
+
+
+class ActionReceiptError(IAPSDKError):
+    """Action receipt history is invalid or does not match the registry."""
