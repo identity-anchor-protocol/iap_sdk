@@ -178,3 +178,48 @@ def test_actions_flush_json_submits_receipts(tmp_path, monkeypatch) -> None:
     assert payload["latest_registry_sequence"] == 1
     assert payload["registry_public_key_source"] == "registry"
     assert (tmp_path / ".iap" / "actions" / "receipts.log").exists()
+
+
+def test_actions_verify_json_reports_receipt_verification(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    init_out = io.StringIO()
+    init_err = io.StringIO()
+    assert main(["init", "--project-local", "--json"], stdout=init_out, stderr=init_err) == 0
+    _set_state_root_memory_root(tmp_path, "e" * 64)
+
+    operator = IAPOperator.from_project(project_root=tmp_path)
+    operator.file_write(tmp_path / "note.txt", "hello")
+
+    fake_client = _FakeRegistryClient()
+    monkeypatch.setattr("iap_sdk.cli.main._build_registry_client", lambda **_: fake_client)
+
+    flush_out = io.StringIO()
+    flush_err = io.StringIO()
+    assert (
+        main(["actions", "flush", "--project-local", "--json"], stdout=flush_out, stderr=flush_err)
+        == 0
+    )
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        [
+            "actions",
+            "verify",
+            "--project-local",
+            "--registry-public-key-b64",
+            fake_client.public_key_b64,
+            "--json",
+        ],
+        stdout=out,
+        stderr=err,
+    )
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["ok"] is True
+    assert payload["receipt_count"] == 1
+    assert payload["receipt_log_consistent"] is True
+    assert payload["receipt_coverage_complete"] is True
+    assert payload["receipt_signatures_verified"] == 1
