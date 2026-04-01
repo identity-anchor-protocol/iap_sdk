@@ -268,7 +268,10 @@ def verify_action_event_signature(payload: dict[str, Any], public_key_bytes: byt
     if not model.signature:
         return False
     signature = base64.b64decode(model.signature)
-    canonical = canonical_action_event_bytes(model.model_dump(exclude_none=True), include_signature=False)
+    canonical = canonical_action_event_bytes(
+        model.model_dump(exclude_none=True),
+        include_signature=False,
+    )
     return verify_ed25519(signature, canonical, public_key_bytes)
 
 
@@ -383,7 +386,9 @@ class ActionLogStore:
         if model.sequence != expected_sequence:
             raise ActionLogIntegrityError("action event sequence does not continue local chain")
 
-        expected_prev_hash = ZERO_HASH if state.latest_event_hash is None else state.latest_event_hash
+        expected_prev_hash = (
+            ZERO_HASH if state.latest_event_hash is None else state.latest_event_hash
+        )
         if model.prev_event_hash != expected_prev_hash:
             raise ActionLogIntegrityError("action event prev_event_hash does not match local chain")
 

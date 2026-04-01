@@ -37,7 +37,12 @@ from iap_sdk.cli.tracking import (
     load_track_config,
 )
 from iap_sdk.client import RegistryClient
-from iap_sdk.errors import ActionLogIntegrityError, RegistryRequestError, RegistryUnavailableError, SDKTimeoutError
+from iap_sdk.errors import (
+    ActionLogIntegrityError,
+    RegistryRequestError,
+    RegistryUnavailableError,
+    SDKTimeoutError,
+)
 from iap_sdk.manifest import build_identity_manifest
 from iap_sdk.requests import (
     build_continuity_request,
@@ -161,7 +166,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Prefer ./.iap/identity/ed25519.json for this project",
     )
-    actions_verify.add_argument("--json", action="store_true", help="Print verification result as JSON")
+    actions_verify.add_argument(
+        "--json",
+        action="store_true",
+        help="Print verification result as JSON",
+    )
 
     setup = sub.add_parser("setup", help="Bootstrap registry access settings in one command")
     setup_registry_base_group = setup.add_mutually_exclusive_group()

@@ -11,7 +11,10 @@ def _set_state_root_memory_root(project_root, memory_root: str) -> None:
     state_root_path = project_root / ".iap" / "state" / "state_root.json"
     payload = json.loads(state_root_path.read_text(encoding="utf-8"))
     payload["memory_root"] = memory_root
-    state_root_path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    state_root_path.write_text(
+        json.dumps(payload, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_actions_status_json_reports_latest_event(tmp_path, monkeypatch) -> None:

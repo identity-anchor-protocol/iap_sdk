@@ -21,7 +21,7 @@ from iap_sdk.actions.core import (
     hash_canonical_object,
     sign_action_event,
 )
-from iap_sdk.cli.amcs import AMCSError, AMCSRootResult, get_amcs_root
+from iap_sdk.cli.amcs import AMCSError, get_amcs_root
 from iap_sdk.crypto.agent_identity import derive_agent_id, validate_agent_id
 from iap_sdk.errors import ActionContextError, ActionIdentityError
 
@@ -65,7 +65,9 @@ def resolve_context_root(
         return _normalize_hex_hash(explicit_context_root, field_name="context_root")
 
     resolved_state_root = (
-        Path(state_root_path) if state_root_path is not None else default_state_root_path(project_root)
+        Path(state_root_path)
+        if state_root_path is not None
+        else default_state_root_path(project_root)
     )
     if resolved_state_root.exists():
         try:
@@ -114,9 +116,15 @@ class IAPOperator:
         if logging_mode not in {"hash_only", "local_full"}:
             raise ValueError("logging_mode must be 'hash_only' or 'local_full'")
         self.project_root = Path(project_root) if project_root is not None else Path.cwd()
-        self.actions_dir = Path(actions_dir) if actions_dir is not None else default_actions_dir(self.project_root)
+        self.actions_dir = (
+            Path(actions_dir)
+            if actions_dir is not None
+            else default_actions_dir(self.project_root)
+        )
         self.state_root_path = (
-            Path(state_root_path) if state_root_path is not None else default_state_root_path(self.project_root)
+            Path(state_root_path)
+            if state_root_path is not None
+            else default_state_root_path(self.project_root)
         )
         self.amcs_db_path = str(amcs_db_path) if amcs_db_path is not None else None
         self.private_key_bytes = private_key_bytes
@@ -126,7 +134,10 @@ class IAPOperator:
         )
         if not derived_agent_id:
             raise ActionIdentityError("agent_id or public_key_bytes is required")
-        if public_key_bytes is not None and not validate_agent_id(public_key_bytes, derived_agent_id):
+        if public_key_bytes is not None and not validate_agent_id(
+            public_key_bytes,
+            derived_agent_id,
+        ):
             raise ActionIdentityError("agent identity does not match public key")
         self.agent_id = derived_agent_id
         self.logging_mode = logging_mode
@@ -196,7 +207,9 @@ class IAPOperator:
         shell_args = list(args or [])
         effective_cwd = str(Path(cwd) if cwd is not None else self.project_root)
         allowed_env_keys = (
-            self.default_env_allowlist if env_allowlist is None else _normalize_allowlist(env_allowlist)
+            self.default_env_allowlist
+            if env_allowlist is None
+            else _normalize_allowlist(env_allowlist)
         )
         stdin_payload = _coerce_bytes(stdin_bytes)
         action_payload: dict[str, Any] = {
@@ -635,7 +648,7 @@ class IAPOperator:
         duration_ms: int,
         error: Exception,
     ) -> RecordedActionResult:
-        recorded = self._append_event(
+        self._append_event(
             prepared=prepared,
             outputs_object={
                 "result": "error",
