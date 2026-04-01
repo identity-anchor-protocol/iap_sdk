@@ -21,11 +21,18 @@ def _extract_iap_commands(text: str) -> list[str]:
     pattern = re.compile(r"```bash\s*(.*?)```", re.DOTALL | re.IGNORECASE)
     commands: list[str] = []
     for block in pattern.findall(text):
+        pending = ""
         for line in block.splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            if stripped.startswith("iap-agent "):
+            if pending:
+                stripped = f"{pending} {stripped}"
+                pending = ""
+            if stripped.endswith("\\"):
+                pending = stripped[:-1].rstrip()
+                continue
+            if stripped.startswith("iap-agent ") or stripped.startswith("iap "):
                 commands.append(stripped)
     return commands
 
@@ -59,7 +66,7 @@ def main() -> int:
         for command in commands:
             checked += 1
             argv = shlex.split(command)
-            if argv and argv[0] == "iap-agent":
+            if argv and argv[0] in {"iap-agent", "iap"}:
                 argv = argv[1:]
             if any(token.startswith("<") and token.endswith(">") for token in argv):
                 continue
