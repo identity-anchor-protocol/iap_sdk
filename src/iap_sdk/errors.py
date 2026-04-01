@@ -60,3 +60,15 @@ class SchemaValidationError(IAPSDKError):
 
 class SDKTimeoutError(IAPSDKError):
     """Timed out waiting for registry state."""
+
+
+class ActionLogIntegrityError(IAPSDKError):
+    """Local action log is missing entries or was tampered with."""
+
+
+class ActionContextError(IAPSDKError):
+    """Action provenance context_root could not be resolved safely."""
+
+
+class ActionIdentityError(IAPSDKError):
+    """Action logger identity material is missing or inconsistent."""
