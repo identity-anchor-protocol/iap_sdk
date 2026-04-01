@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from iap_sdk.actions.core import (
-    ActionEvent,
     ActionLogStore,
     action_event_hash,
     verify_action_event_signature,
@@ -51,7 +49,7 @@ class ActionChainVerificationResult:
 def summarize_action_chain(base_dir: str | Path) -> ActionChainSummary:
     store = ActionLogStore(base_dir)
     state = store.replay()
-    events = _read_events(store.log_path)
+    events = store.read_events()
     latest_event = events[-1] if events else None
 
     index_present = store.index_path.exists()
@@ -133,7 +131,7 @@ def verify_action_chain(
     derived_agent_id = (
         derive_agent_id(public_key_bytes) if public_key_bytes is not None else None
     )
-    events = _read_events(store.log_path)
+    events = store.read_events()
 
     for model in events:
         if expected_agent_id is not None and model.agent_id != expected_agent_id:
@@ -213,32 +211,6 @@ def verify_action_chain(
         signatures_verified=signatures_verified,
         index_consistent=True,
     )
-
-
-def _read_events(log_path: Path) -> list[ActionEvent]:
-    if not log_path.exists():
-        return []
-
-    models: list[ActionEvent] = []
-    for line_number, raw_line in enumerate(
-        log_path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ActionLogIntegrityError(
-                f"actions.log line {line_number} is not valid JSON"
-            ) from exc
-        try:
-            models.append(ActionEvent.model_validate(payload))
-        except Exception as exc:
-            raise ActionLogIntegrityError(f"actions.log line {line_number} is invalid") from exc
-    return models
-
 
 __all__ = [
     "ActionChainSummary",
