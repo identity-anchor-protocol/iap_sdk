@@ -23,13 +23,24 @@ python examples/state-drift-demo/demo.py
 
 You'll see `verify_before_ok=True`, then a simulated tamper, then `verify_after_ok=False`. That's the core idea: once state history is modified, verification fails.
 
-### Option 2: Full flow — anchor an identity and get a real certificate
+### Option 2: Action provenance demo (3 minutes, fully offline)
+
+```bash
+git clone https://github.com/identity-anchor-protocol/iap_sdk.git
+cd iap_sdk
+pip install -e ".[dev]"
+python examples/isnad-demo/demo.py
+```
+
+You'll see `verify_before_ok=True`, `verify_after_receipts_ok=True`, then a deliberate receipt tamper and `verify_after_tamper_ok=False`.
+
+### Option 3: Full flow — anchor an identity and get a real certificate
 
 ```bash
 pip install iap-agent
 iap init --project-local
 iap anchor --registry-base https://registry.ia-protocol.com
-iap commit "my first state commit" --registry-base https://registry.ia-protocol.com
+iap commit "my first state commit"
 ```
 
 That creates a keypair, registers it at the public registry, and issues your first continuity certificate. The certificate is a signed JSON file you can verify offline.
@@ -208,6 +219,8 @@ If you hit a bug, an upgrade issue, or have recommendations for improvement, con
 - `/docs/final-live-test.md`
 - `/docs/upgrade-guide.md`
 - `/docs/security-assumptions.md`
+- `/docs/isnad-local-demo.md`
+- `/examples/isnad-demo/README.md`
 - `/examples/state-drift-demo/README.md`
 - `/RELEASE.md`
 - `/RELEASE_NOTES_TEMPLATE.md`
